@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { env } from '../config/env';
 import { TEST_CONTACTS } from '../config/test-context';
+import { requireAuth } from '../middleware/require-auth';
+import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { normalizeEmail } from '../utils/normalize-email';
 
@@ -16,6 +19,8 @@ const importSchema = z.object({
   contacts: z.array(contactSchema).min(1),
 });
 
+contactsRouter.use(requireAuth, requireTenant);
+
 contactsRouter.get('/', async (request, response) => {
   const tenantId = request.tenant?.id;
 
@@ -26,7 +31,12 @@ contactsRouter.get('/', async (request, response) => {
     .order('created_at', { ascending: false });
 
   if (error) {
-    response.json({ contacts: TEST_CONTACTS });
+    if (env.AUTH_BYPASS) {
+      response.json({ contacts: TEST_CONTACTS });
+      return;
+    }
+
+    response.status(500).json({ error: 'Failed to load contacts' });
     return;
   }
 
@@ -62,16 +72,21 @@ contactsRouter.post('/', async (request, response) => {
     .single();
 
   if (error || !data) {
-    response.status(201).json({
-      contact: {
-        id: crypto.randomUUID(),
-        email,
-        first_name: parsed.data.firstName ?? null,
-        last_name: parsed.data.lastName ?? null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-    });
+    if (env.AUTH_BYPASS) {
+      response.status(201).json({
+        contact: {
+          id: crypto.randomUUID(),
+          email,
+          first_name: parsed.data.firstName ?? null,
+          last_name: parsed.data.lastName ?? null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    response.status(500).json({ error: 'Failed to save contact' });
     return;
   }
 
@@ -100,7 +115,12 @@ contactsRouter.post('/import', async (request, response) => {
   });
 
   if (error) {
-    response.status(201).json({ imported: rows.length });
+    if (env.AUTH_BYPASS) {
+      response.status(201).json({ imported: rows.length });
+      return;
+    }
+
+    response.status(500).json({ error: 'Failed to import contacts' });
     return;
   }
 

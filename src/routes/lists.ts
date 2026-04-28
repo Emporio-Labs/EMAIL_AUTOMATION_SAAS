@@ -1,6 +1,9 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { env } from '../config/env';
 import { TEST_CONTACTS, TEST_LISTS } from '../config/test-context';
+import { requireAuth } from '../middleware/require-auth';
+import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { normalizeEmail } from '../utils/normalize-email';
 
@@ -18,6 +21,8 @@ const addContactsSchema = z.object({
   message: 'Provide contactIds or emails',
 });
 
+listsRouter.use(requireAuth, requireTenant);
+
 listsRouter.get('/', async (request, response) => {
   const tenantId = request.tenant?.id;
 
@@ -28,7 +33,12 @@ listsRouter.get('/', async (request, response) => {
     .order('created_at', { ascending: false });
 
   if (error) {
-    response.json({ lists: TEST_LISTS });
+    if (env.AUTH_BYPASS) {
+      response.json({ lists: TEST_LISTS });
+      return;
+    }
+
+    response.status(500).json({ error: 'Failed to load lists' });
     return;
   }
 
@@ -56,15 +66,20 @@ listsRouter.post('/', async (request, response) => {
     .single();
 
   if (error || !data) {
-    response.status(201).json({
-      list: {
-        id: crypto.randomUUID(),
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      },
-    });
+    if (env.AUTH_BYPASS) {
+      response.status(201).json({
+        list: {
+          id: crypto.randomUUID(),
+          name: parsed.data.name,
+          description: parsed.data.description ?? null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    response.status(500).json({ error: 'Failed to create list' });
     return;
   }
 
@@ -132,12 +147,17 @@ listsRouter.get('/:listId/contacts', async (request, response) => {
     .eq('contacts.tenant_id', tenantId as string);
 
   if (error) {
-    response.json({
-      contacts: TEST_CONTACTS.map((contact) => ({
-        contact_id: contact.id,
-        contacts: contact,
-      })),
-    });
+    if (env.AUTH_BYPASS) {
+      response.json({
+        contacts: TEST_CONTACTS.map((contact) => ({
+          contact_id: contact.id,
+          contacts: contact,
+        })),
+      });
+      return;
+    }
+
+    response.status(500).json({ error: 'Failed to load list contacts' });
     return;
   }
 

@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { env } from '../config/env';
-import { TEST_CONTACTS } from '../config/test-context';
+import { requireAuth } from '../middleware/require-auth';
+import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
 import { normalizeEmail } from '../utils/normalize-email';
@@ -17,6 +18,8 @@ const sendSchema = z.object({
   contactIds: z.array(z.string().uuid()).optional(),
   listIds: z.array(z.string().uuid()).optional(),
 });
+
+sendRouter.use(requireAuth, requireTenant);
 
 sendRouter.post('/', async (request, response) => {
   const parsed = sendSchema.safeParse(request.body);
@@ -46,18 +49,20 @@ sendRouter.post('/', async (request, response) => {
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  if (contactRowsResult.error) {
+  if (contactRowsResult.error && !env.AUTH_BYPASS) {
     response.status(500).json({ error: 'Failed to resolve contacts' });
     return;
   }
 
-  if (listRowsResult.error) {
+  if (listRowsResult.error && !env.AUTH_BYPASS) {
     response.status(500).json({ error: 'Failed to resolve lists' });
     return;
   }
 
-  const resolvedFromContacts = (contactRowsResult.data ?? []).map((contact) => normalizeEmail(contact.email));
-  const resolvedFromLists = (listRowsResult.data ?? []).flatMap((row) => {
+  const resolvedFromContacts = (contactRowsResult.error ? [] : contactRowsResult.data ?? []).map((contact) =>
+    normalizeEmail(contact.email),
+  );
+  const resolvedFromLists = (listRowsResult.error ? [] : listRowsResult.data ?? []).flatMap((row) => {
     const contacts = row.contacts;
     if (Array.isArray(contacts)) {
       return contacts.map((contact: { email: string }) => normalizeEmail(contact.email));
@@ -91,19 +96,23 @@ sendRouter.post('/', async (request, response) => {
     .insert(jobRows)
     .select('job_id, tenant_id, contact_id, list_id, from_email, to_email, subject, html');
 
-  const jobsToPublish =
-    insertError || !insertedJobs
-      ? jobRows.map((job) => ({
-          job_id: randomUUID(),
-          tenant_id: job.tenant_id,
-          contact_id: null,
-          list_id: null,
-          from_email: job.from_email,
-          to_email: job.to_email,
-          subject: job.subject,
-          html: job.html,
-        }))
-      : insertedJobs;
+  if ((insertError || !insertedJobs) && !env.AUTH_BYPASS) {
+    response.status(500).json({ error: 'Failed to create email jobs' });
+    return;
+  }
+
+  const jobsToPublish = insertError || !insertedJobs
+    ? jobRows.map((job) => ({
+        job_id: randomUUID(),
+        tenant_id: job.tenant_id,
+        contact_id: null,
+        list_id: null,
+        from_email: job.from_email,
+        to_email: job.to_email,
+        subject: job.subject,
+        html: job.html,
+      }))
+    : insertedJobs;
 
   const publishedJobs = [] as Array<{ jobId: string; sqsMessageId: string | null }>;
   const failedJobs = [] as Array<{ jobId: string; reason: string }>;

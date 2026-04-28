@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f6f1;
+  --foreground: #1f1f1a;
+  --muted: #6f6f64;
+  --surface: #ffffff;
+  --surface-muted: #fbfaf5;
+  --border: #e6e2d8;
+  --accent: #7fd8b5;
+  --accent-dark: #2c8b6b;
+  --accent-soft: #e6f7ef;
+  --shadow: 0 22px 60px rgba(23, 28, 17, 0.08);
+  --font-display: var(--font-playfair);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-dark: var(--accent-dark);
+  --color-accent-soft: var(--accent-soft);
+  --font-sans: var(--font-manrope);
+}
+
+body {
+  background: radial-gradient(circle at top, #e7f4ec 0%, #f7f6f1 38%, #f7f6f1 100%);
+  color: var(--foreground);
+  font-family: var(--font-manrope), system-ui, sans-serif;
+}
+
+.font-display {
+  font-family: var(--font-display), "Times New Roman", serif;
+}
+
+.card-shadow {
+  box-shadow: var(--shadow);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in {
+  animation: rise 0.6s ease-out both;
+}
+
+.fade-in-delay-1 {
+  animation: rise 0.7s ease-out 0.08s both;
+}
+
+.fade-in-delay-2 {
+  animation: rise 0.7s ease-out 0.16s both;
+}
