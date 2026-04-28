@@ -17,6 +17,12 @@ const loginSchema = z.object({
   password: z.string().min(6),
 });
 
+const signupSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+  tenantName: z.string().trim().min(2).max(80),
+});
+
 authRouter.post('/login', async (request, response) => {
   const parsed = loginSchema.safeParse(request.body);
 
@@ -41,6 +47,72 @@ authRouter.post('/login', async (request, response) => {
     expires_in: data.session.expires_in,
     token_type: data.session.token_type,
     user: data.user,
+  });
+});
+
+authRouter.post('/signup', async (request, response) => {
+  const parsed = signupSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    response.status(400).json({ error: 'Invalid payload', issues: parsed.error.flatten() });
+    return;
+  }
+
+  const { email, password, tenantName } = parsed.data;
+
+  // Create the Supabase auth user
+  const { data: authData, error: authError } = await supabasePublic.auth.signUp({ email, password });
+
+  if (authError || !authData.user) {
+    response.status(400).json({ error: authError?.message ?? 'Failed to create account' });
+    return;
+  }
+
+  const user = authData.user;
+
+  // Derive a unique slug
+  const tenantSlug = `${tenantName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${randomUUID().slice(0, 8)}`;
+
+  const { data: tenant, error: tenantError } = await supabaseAdmin
+    .from('tenants')
+    .insert({ name: tenantName, slug: tenantSlug, owner_user_id: user.id })
+    .select('id, name, slug')
+    .single();
+
+  if (tenantError || !tenant) {
+    console.error('[signup] tenant insert error:', tenantError);
+    response.status(500).json({ error: 'Account created but failed to set up workspace', detail: tenantError?.message, hint: tenantError?.hint, code: tenantError?.code });
+    return;
+  }
+
+  const { error: memberError } = await supabaseAdmin.from('tenant_members').insert({
+    tenant_id: tenant.id,
+    user_id: user.id,
+    role: 'owner',
+  });
+
+  if (memberError) {
+    console.error('[signup] tenant_members insert error:', memberError);
+    response.status(500).json({ error: 'Account created but failed to assign membership', detail: memberError?.message, hint: memberError?.hint, code: memberError?.code });
+    return;
+  }
+
+  // Return session tokens if email confirmation is not required
+  if (authData.session) {
+    response.status(201).json({
+      access_token: authData.session.access_token,
+      refresh_token: authData.session.refresh_token,
+      expires_in: authData.session.expires_in,
+      token_type: authData.session.token_type,
+      user: authData.user,
+    });
+    return;
+  }
+
+  // Email confirmation is required — ask the user to verify
+  response.status(201).json({
+    requiresConfirmation: true,
+    message: 'Account created! Check your email to confirm your address before signing in.',
   });
 });
 

@@ -16,7 +16,8 @@ export async function requireTenant(request: Request, response: Response, next: 
     .maybeSingle();
 
   if (membershipError) {
-    response.status(500).json({ error: 'Failed to resolve tenant context' });
+    console.error('[requireTenant] tenant_members error:', membershipError);
+    response.status(500).json({ error: 'Failed to resolve tenant context', detail: membershipError.message, hint: membershipError.hint, code: membershipError.code });
     return;
   }
 
@@ -32,7 +33,8 @@ export async function requireTenant(request: Request, response: Response, next: 
     .maybeSingle();
 
   if (tenantError || !tenant) {
-    response.status(500).json({ error: 'Tenant not found' });
+    console.error('[requireTenant] tenants error:', tenantError);
+    response.status(500).json({ error: 'Tenant not found', detail: tenantError?.message, hint: tenantError?.hint, code: tenantError?.code });
     return;
   }
 

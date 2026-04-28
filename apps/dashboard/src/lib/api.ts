@@ -19,7 +19,15 @@ export async function apiFetch<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || "Request failed");
+    let message = text || "Request failed";
+    try {
+      const json = JSON.parse(text);
+      if (typeof json.error === "string") message = json.error;
+      else if (typeof json.message === "string") message = json.message;
+    } catch {
+      // keep raw text as fallback
+    }
+    throw new Error(message);
   }
 
   return response.json() as Promise<T>;
@@ -35,6 +43,26 @@ export async function loginWithPassword(email: string, password: string) {
   }>("/v1/auth/login", null, {
     method: "POST",
     body: JSON.stringify({ email, password }),
+  });
+}
+
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  tenantName: string,
+) {
+  return apiFetch<
+    | {
+        access_token: string;
+        refresh_token: string;
+        expires_in: number;
+        token_type: string;
+        user: { id: string; email?: string | null };
+      }
+    | { requiresConfirmation: true; message: string }
+  >("/v1/auth/signup", null, {
+    method: "POST",
+    body: JSON.stringify({ email, password, tenantName }),
   });
 }
 

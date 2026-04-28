@@ -6,6 +6,7 @@ loadEnv();
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(3000),
+  AUTH_BYPASS: z.string().transform((v) => v === 'true').default('false'),
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
@@ -15,6 +16,7 @@ const envSchema = z.object({
   AWS_SESSION_TOKEN: z.string().min(1).optional(),
   SQS_QUEUE_URL: z.string().url(),
   DEFAULT_FROM_EMAIL: z.string().email(),
+  INTERNAL_KEY: z.string().min(16),
 });
 
 export const env = envSchema.parse(process.env);

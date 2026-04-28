@@ -17,17 +17,24 @@ type ContactsResponse = {
   contacts: Contact[];
 };
 
+type CreateContactResponse = {
+  contact: Contact;
+};
+
 export default function ContactsPage() {
   const { token } = useAuth();
   const [items, setItems] = useState<Contact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!token) {
-      return;
-    }
+  // Modal state
+  const [showModal, setShowModal] = useState(false);
+  const [form, setForm] = useState({ email: "", firstName: "", lastName: "" });
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
+  function loadContacts() {
+    if (!token) return;
     setLoading(true);
     apiFetch<ContactsResponse>("/v1/contacts", token)
       .then((response) => {
@@ -36,7 +43,42 @@ export default function ContactsPage() {
       })
       .catch((err) => setError(err?.message ?? "Failed to load contacts"))
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadContacts();
   }, [token]);
+
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+    setCreating(true);
+    setCreateError(null);
+
+    try {
+      const result = await apiFetch<CreateContactResponse>("/v1/contacts", token, {
+        method: "POST",
+        body: JSON.stringify({
+          email: form.email,
+          firstName: form.firstName || undefined,
+          lastName: form.lastName || undefined,
+        }),
+      });
+      setItems((prev) => [result.contact, ...prev]);
+      setShowModal(false);
+      setForm({ email: "", firstName: "", lastName: "" });
+    } catch (err: any) {
+      setCreateError(err?.message ?? "Failed to add contact");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  function openModal() {
+    setForm({ email: "", firstName: "", lastName: "" });
+    setCreateError(null);
+    setShowModal(true);
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -44,8 +86,17 @@ export default function ContactsPage() {
       <main className="flex flex-col gap-8 px-6 py-8">
         <section className="rounded-3xl border border-border bg-surface px-6 py-6 card-shadow fade-in">
           <div className="flex items-center justify-between">
-            <h3 className="font-display text-2xl">All contacts</h3>
-            <span className="text-xs text-muted">{items.length} contacts</span>
+            <div>
+              <h3 className="font-display text-2xl">All contacts</h3>
+              <p className="text-xs text-muted mt-0.5">{items.length} contacts</p>
+            </div>
+            <button
+              id="add-contact-btn"
+              onClick={openModal}
+              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:bg-[#2a2a2a] active:scale-95"
+            >
+              + Add contact
+            </button>
           </div>
 
           <div className="mt-4 overflow-x-auto">
@@ -74,7 +125,7 @@ export default function ContactsPage() {
                 ) : items.length ? (
                   items.map((row) => (
                     <tr key={row.id} className="border-b border-border/60">
-                      <td className="px-2 py-3 text-foreground">{row.email}</td>
+                      <td className="px-2 py-3 text-foreground font-medium">{row.email}</td>
                       <td className="px-2 py-3 text-muted">{row.first_name ?? "—"}</td>
                       <td className="px-2 py-3 text-muted">{row.last_name ?? "—"}</td>
                       <td className="px-2 py-3 text-muted">
@@ -84,8 +135,14 @@ export default function ContactsPage() {
                   ))
                 ) : (
                   <tr>
-                    <td className="px-2 py-4 text-muted" colSpan={4}>
-                      No contacts found yet.
+                    <td className="px-2 py-8 text-center text-muted" colSpan={4}>
+                      No contacts yet.{" "}
+                      <button
+                        onClick={openModal}
+                        className="text-accent-dark font-semibold hover:underline underline-offset-2"
+                      >
+                        Add your first contact →
+                      </button>
                     </td>
                   </tr>
                 )}
@@ -94,6 +151,88 @@ export default function ContactsPage() {
           </div>
         </section>
       </main>
+
+      {/* ── Add Contact Modal ─────────────────────────────────────────── */}
+      {showModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowModal(false); }}
+        >
+          <div className="w-full max-w-md rounded-3xl border border-border bg-surface px-8 py-8 card-shadow fade-in">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-display text-2xl">Add a contact</h2>
+              <button
+                onClick={() => setShowModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface-muted transition"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form className="flex flex-col gap-4" onSubmit={handleCreate}>
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                Email address *
+                <input
+                  id="contact-email-input"
+                  type="email"
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  placeholder="e.g. john@company.com"
+                  value={form.email}
+                  onChange={(e) => setForm({ ...form, email: e.target.value })}
+                  required
+                  autoFocus
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="flex flex-col gap-2 text-sm text-muted">
+                  First name
+                  <input
+                    id="contact-firstname-input"
+                    className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                    placeholder="John"
+                    value={form.firstName}
+                    onChange={(e) => setForm({ ...form, firstName: e.target.value })}
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-sm text-muted">
+                  Last name
+                  <input
+                    id="contact-lastname-input"
+                    className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                    placeholder="Doe"
+                    value={form.lastName}
+                    onChange={(e) => setForm({ ...form, lastName: e.target.value })}
+                  />
+                </label>
+              </div>
+
+              {createError && (
+                <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">{createError}</p>
+              )}
+
+              <div className="flex gap-3 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowModal(false)}
+                  className="flex-1 h-11 rounded-full border border-border text-sm font-semibold text-muted transition hover:bg-surface-muted"
+                >
+                  Cancel
+                </button>
+                <button
+                  id="add-contact-submit"
+                  type="submit"
+                  disabled={creating}
+                  className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+                >
+                  {creating ? "Adding..." : "Add contact"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

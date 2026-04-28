@@ -133,9 +133,7 @@ sendRouter.post('/', async (request, response) => {
 
       await supabaseAdmin
         .from('email_jobs')
-        .update({
-          sqs_message_id: messageId,
-        })
+        .update({ sqs_message_id: messageId })
         .eq('job_id', job.job_id);
     } catch (error) {
       const reason = error instanceof Error ? error.message : 'Failed to publish to SQS';

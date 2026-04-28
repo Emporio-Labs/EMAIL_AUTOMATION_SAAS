@@ -6,6 +6,7 @@ import { authRouter } from './routes/auth';
 import { analyticsRouter } from './routes/analytics';
 import { contactsRouter } from './routes/contacts';
 import { healthRouter } from './routes/health';
+import { internalRouter } from './routes/internal';
 import { listsRouter } from './routes/lists';
 import { sendsRouter } from './routes/sends';
 import { sendRouter } from './routes/send';
@@ -25,6 +26,7 @@ export function createApp() {
   app.use('/v1/lists', listsRouter);
   app.use('/v1/contacts', contactsRouter);
   app.use('/v1/send', sendRouter);
+  app.use('/internal', internalRouter);
 
   app.use((_request, response) => {
     response.status(404).json({ error: 'Not found' });
