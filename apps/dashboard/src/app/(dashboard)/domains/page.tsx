@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
 import { Topbar } from "@/components/topbar";
@@ -175,11 +175,8 @@ export default function DomainsPage() {
                   <tr><td className="px-2 py-6 text-red-600" colSpan={5}>{error}</td></tr>
                 ) : items.length > 0 ? (
                   items.map((row) => (
-                    <>
-                      <tr
-                        key={row.id}
-                        className="border-b border-border/60 transition-colors hover:bg-surface-muted/40"
-                      >
+                    <Fragment key={row.id}>
+                      <tr className="border-b border-border/60 transition-colors hover:bg-surface-muted/40">
                         {/* Domain */}
                         <td className="px-2 py-3 font-mono text-foreground font-medium">{row.domain}</td>
 
@@ -238,7 +235,7 @@ export default function DomainsPage() {
 
                       {/* Inline verify result below the row */}
                       {verifyResult[row.id]?.message && (
-                        <tr key={`${row.id}-result`} className="border-b border-border/30">
+                        <tr className="border-b border-border/30">
                           <td colSpan={5} className="px-2 pb-3">
                             <p className={`rounded-xl px-4 py-2 text-xs ${
                               verifyResult[row.id].ok
@@ -250,7 +247,7 @@ export default function DomainsPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   ))
                 ) : (
                   <tr>

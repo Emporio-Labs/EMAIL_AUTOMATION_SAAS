@@ -17,7 +17,13 @@ const client = new SQSClient({
 });
 
 export function buildEmailJobMessage(input: Omit<EmailJobMessage, 'version'>): string {
-  return JSON.stringify(input);
+  const payload = {
+    ...input,
+    job_id: input.jobId,
+    tenant_id: input.tenantId,
+  };
+
+  return JSON.stringify(payload);
 }
 
 export async function publishEmailJobMessage(body: string): Promise<string | null> {

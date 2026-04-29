@@ -5,11 +5,27 @@ import { supabaseAdmin } from '../lib/supabase';
 
 export const internalRouter = Router();
 
-const jobStatusSchema = z.object({
-  jobId: z.string().uuid(),
-  status: z.enum(['delivered', 'failed']),
-  failureReason: z.string().optional(),
-});
+const jobStatusSchema = z
+  .object({
+    jobId: z.string().uuid().optional(),
+    job_id: z.string().uuid().optional(),
+    status: z.enum(['delivered', 'failed']),
+    failureReason: z.string().optional(),
+    failure_reason: z.string().optional(),
+  })
+  .refine((data) => data.jobId || data.job_id, {
+    message: 'jobId is required',
+    path: ['jobId'],
+  })
+  .refine((data) => !data.jobId || !data.job_id || data.jobId === data.job_id, {
+    message: 'jobId and job_id must match',
+    path: ['jobId'],
+  })
+  .transform((data) => ({
+    jobId: data.jobId ?? data.job_id!,
+    status: data.status,
+    failureReason: data.failureReason ?? data.failure_reason,
+  }));
 
 internalRouter.post('/job-status', async (request, response) => {
   // ── Auth: shared secret ───────────────────────────────────────────────────
