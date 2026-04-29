@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
@@ -27,6 +28,16 @@ type ListContact = { contact_id: string; contacts: Contact };
 
 type Toast = { id: number; type: "success" | "error"; message: string };
 
+type SendingAddress = {
+  id: string;
+  address: string;
+  label: string | null;
+  domain_id: string;
+  created_at: string;
+};
+
+type SendingAddressesResponse = { addresses: SendingAddress[] };
+
 let toastCounter = 0;
 type RecipientTab = "lists" | "contacts" | "manual";
 
@@ -40,6 +51,10 @@ export default function SendsPage() {
   const [form, setForm] = useState({ subject: "", html: "" });
   const [sending, setSending] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const [fromAddress, setFromAddress] = useState("");
+  const [sendingAddresses, setSendingAddresses] = useState<SendingAddress[]>([]);
+  const [loadingAddresses, setLoadingAddresses] = useState(false);
 
   // Recipients state — single shared Set
   const [recipientEmails, setRecipientEmails] = useState<Set<string>>(new Set());
@@ -94,6 +109,15 @@ export default function SendsPage() {
   }
 
   useEffect(() => { loadSends(); }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    setLoadingAddresses(true);
+    apiFetch<SendingAddressesResponse>("/v1/sending-addresses", token)
+      .then((res) => setSendingAddresses(res.addresses))
+      .catch(() => {})
+      .finally(() => setLoadingAddresses(false));
+  }, [token]);
 
   // Load lists when "lists" tab is first opened
   useEffect(() => {
@@ -174,6 +198,10 @@ export default function SendsPage() {
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
     const toEmails = Array.from(recipientEmails);
+    if (!fromAddress) {
+      addToast("error", "Select a From address before sending.");
+      return;
+    }
     if (toEmails.length === 0) {
       addToast("error", "Add at least one recipient before sending.");
       return;
@@ -182,7 +210,7 @@ export default function SendsPage() {
     try {
       const result = await apiFetch<{ accepted: number }>("/v1/send", token, {
         method: "POST",
-        body: JSON.stringify({ subject: form.subject, html: form.html, toEmails }),
+        body: JSON.stringify({ subject: form.subject, html: form.html, from: fromAddress, toEmails }),
       });
       addToast("success", `✅ ${result.accepted} email${result.accepted !== 1 ? "s" : ""} queued successfully!`);
       setForm({ subject: "", html: "" });
@@ -212,6 +240,34 @@ export default function SendsPage() {
             </div>
 
             <form className="flex flex-col gap-5" onSubmit={handleSend}>
+
+              {/* ── From address ───────────────────────── */}
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                From address *
+                <select
+                  id="send-from-select"
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  value={fromAddress}
+                  onChange={(e) => setFromAddress(e.target.value)}
+                  disabled={loadingAddresses || sendingAddresses.length === 0}
+                  required
+                >
+                  <option value="">— Select a sending address —</option>
+                  {sendingAddresses.map((addr) => (
+                    <option key={addr.id} value={addr.address}>
+                      {addr.label ? `${addr.label} — ${addr.address}` : addr.address}
+                    </option>
+                  ))}
+                </select>
+                {!loadingAddresses && sendingAddresses.length === 0 && (
+                  <span className="text-xs text-muted">
+                    No sending addresses yet. Manage them in{" "}
+                    <Link className="text-accent-dark font-semibold hover:underline underline-offset-2" href="/sending-addresses">
+                      Sending addresses
+                    </Link>.
+                  </span>
+                )}
+              </label>
 
               {/* ── Subject ────────────────────────────────── */}
               <label className="flex flex-col gap-2 text-sm text-muted">

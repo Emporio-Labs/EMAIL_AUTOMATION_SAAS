@@ -13,7 +13,7 @@ export const sendRouter = Router();
 const sendSchema = z.object({
   subject: z.string().trim().min(1).max(200),
   html: z.string().trim().min(1),
-  from: z.string().email('"from" must be a valid email address using your verified domain'),
+  from: z.string().trim().email('"from" must be a valid email address using your verified domain'),
   toEmails: z.array(z.string().email()).optional(),
   contactIds: z.array(z.string().uuid()).optional(),
   listIds: z.array(z.string().uuid()).optional(),
@@ -33,7 +33,7 @@ sendRouter.post('/', async (request, response) => {
   }
 
   const tenantId = request.tenant?.id;
-  const fromEmail = parsed.data.from;
+  const fromEmail = normalizeEmail(parsed.data.from);
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
 
   const [contactRowsResult, listRowsResult] = await Promise.all([
@@ -91,8 +91,12 @@ sendRouter.post('/', async (request, response) => {
   if (!env.AUTH_BYPASS) {
     const sendingDomain = fromEmail.split('@')[1]?.toLowerCase();
 
-    // Fetch domain record + first verified domain in one shot
-    const [domainCheck, verifiedDomains] = await Promise.all([
+    if (!sendingDomain) {
+      response.status(400).json({ error: 'Invalid from address' });
+      return;
+    }
+
+    const [domainCheck, verifiedDomains, addressCheck, registeredAddresses] = await Promise.all([
       supabaseAdmin
         .from('domains')
         .select('id, verified')
@@ -105,6 +109,17 @@ sendRouter.post('/', async (request, response) => {
         .eq('tenant_id', tenantId as string)
         .eq('verified', true)
         .limit(3),
+      supabaseAdmin
+        .from('sending_addresses')
+        .select('id, address')
+        .eq('tenant_id', tenantId as string)
+        .eq('address', fromEmail)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('sending_addresses')
+        .select('address')
+        .eq('tenant_id', tenantId as string)
+        .limit(3),
     ]);
 
     if (domainCheck.error) {
@@ -112,16 +127,26 @@ sendRouter.post('/', async (request, response) => {
       return;
     }
 
-    const suggestion =
+    if (addressCheck.error) {
+      response.status(500).json({ error: 'Failed to check sending address' });
+      return;
+    }
+
+    const domainSuggestion =
       (verifiedDomains.data ?? [])
         .map((d) => `no-reply@${d.domain}`)
+        .join(', ');
+
+    const addressSuggestion =
+      (registeredAddresses.data ?? [])
+        .map((row) => row.address)
         .join(', ');
 
     if (!domainCheck.data) {
       response.status(403).json({
         error: `Domain "${sendingDomain}" is not registered for this tenant.`,
         hint: 'Add it at POST /v1/domains, publish the CNAME records, then verify.',
-        verifiedDomains: suggestion || 'No verified domains yet.',
+        verifiedDomains: domainSuggestion || 'No verified domains yet.',
       });
       return;
     }
@@ -130,7 +155,16 @@ sendRouter.post('/', async (request, response) => {
       response.status(403).json({
         error: `Domain "${sendingDomain}" is registered but not yet verified.`,
         hint: `Publish the CNAME records and call GET /v1/domains/${domainCheck.data.id}/verify.`,
-        verifiedDomains: suggestion || 'No verified domains yet.',
+        verifiedDomains: domainSuggestion || 'No verified domains yet.',
+      });
+      return;
+    }
+
+    if (!addressCheck.data) {
+      response.status(403).json({
+        error: `Address "${fromEmail}" is not registered for this tenant.`,
+        hint: 'Add it at POST /v1/sending-addresses.',
+        registeredAddresses: addressSuggestion || 'No registered addresses yet.',
       });
       return;
     }

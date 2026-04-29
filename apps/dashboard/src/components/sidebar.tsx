@@ -9,6 +9,7 @@ const navItems = [
   { href: "/contacts", label: "Contacts" },
   { href: "/lists", label: "Lists" },
   { href: "/domains", label: "Domains" },
+  { href: "/sending-addresses", label: "Sending addresses" },
 ];
 
 export function Sidebar() {
