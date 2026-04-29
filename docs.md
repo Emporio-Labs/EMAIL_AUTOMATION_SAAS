@@ -562,8 +562,7 @@ SES starts in sandbox mode — very limited sending (1 email/second, 200/day, on
 ### GitHub Pages setup for SES request
 Since no domain was available, a GitHub Pages URL (`yourusername.github.io/swayammail`) was used as the website URL in the SES production request. AWS does not verify it immediately — they just need to see something real exists.
 
----
-
+--
 ## 13. Assets Created So Far
 
 | Asset | Description |
