@@ -11,6 +11,7 @@ import { internalRouter } from './routes/internal';
 import { listsRouter } from './routes/lists';
 import { sendsRouter } from './routes/sends';
 import { sendRouter } from './routes/send';
+import { sendingAddressesRouter } from './routes/sending-addresses';
 
 export function createApp() {
   const app = express();
@@ -25,6 +26,7 @@ export function createApp() {
   app.use('/v1/analytics', analyticsRouter);
   app.use('/v1/sends', sendsRouter);
   app.use('/v1/domains', domainsRouter);
+  app.use('/v1/sending-addresses', sendingAddressesRouter);
   app.use('/v1/lists', listsRouter);
   app.use('/v1/contacts', contactsRouter);
   app.use('/v1/send', sendRouter);
