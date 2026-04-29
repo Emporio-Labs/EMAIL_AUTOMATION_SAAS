@@ -1,12 +1,14 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { fetchMe, loginWithPassword, signUpWithPassword } from "@/lib/api";
+import { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { apiFetch, fetchMe, loginWithPassword, signUpWithPassword } from "@/lib/api";
+import { OnboardingWizard } from "@/components/onboarding-wizard";
 
 type AuthContextValue = {
   token: string | null;
   user: { id: string; email?: string | null } | null;
   tenant: { id: string; name: string; slug: string | null; role: string } | null;
+  pendingVerification: boolean;
   signOut: () => void;
 };
 
@@ -31,6 +33,28 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Onboarding: true = show wizard, false = go to dashboard
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  // true when user has domains but none are verified yet
+  const [pendingVerification, setPendingVerification] = useState(false);
+
+  const checkOnboarding = useCallback(async (tok: string) => {
+    try {
+      const res = await apiFetch<{ domains: { verified: boolean }[] }>("/v1/domains", tok);
+      const domains = res.domains ?? [];
+      const hasAny     = domains.length > 0;
+      const hasVerified = domains.some((d) => d.verified);
+      // Must register at least one domain before entering dashboard
+      setNeedsOnboarding(!hasAny);
+      // Pending banner: has domains but none verified
+      setPendingVerification(hasAny && !hasVerified);
+    } catch {
+      // API unavailable — show onboarding as safe default.
+      setNeedsOnboarding(true);
+      setPendingVerification(false);
+    }
+  }, []);
+
   useEffect(() => {
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (!stored) {
@@ -40,11 +64,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
     setLoading(true);
     fetchMe(stored)
-      .then((response) => {
+      .then(async (response) => {
         setToken(stored);
         setUser(response.user);
         setTenant(response.tenant);
         setError(null);
+        await checkOnboarding(stored);
       })
       .catch(() => {
         window.localStorage.removeItem(STORAGE_KEY);
@@ -58,11 +83,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUser(null);
     setTenant(null);
+    setNeedsOnboarding(false);
+    setPendingVerification(false);
   };
 
   const contextValue = useMemo(
-    () => ({ token, user, tenant, signOut }),
-    [token, user, tenant],
+    () => ({ token, user, tenant, pendingVerification, signOut }),
+    [token, user, tenant, pendingVerification],
   );
 
   if (loading) {
@@ -81,11 +108,43 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         setTenant={setTenant}
         setError={setError}
         error={error}
+        onLoginSuccess={checkOnboarding}
+        onSignupSuccess={() => setNeedsOnboarding(true)}
       />
     );
   }
 
-  return <AuthContext.Provider value={contextValue}>{children}</AuthContext.Provider>;
+  // Show onboarding wizard if no verified domain yet
+  if (needsOnboarding) {
+    return (
+      <OnboardingWizard
+        token={token}
+        tenantName={tenant?.name ?? ""}
+        onComplete={() => setNeedsOnboarding(false)}
+      />
+    );
+  }
+
+  return (
+    <AuthContext.Provider value={contextValue}>
+      {/* Persistent banner when domain is registered but DKIM not yet verified */}
+      {pendingVerification && (
+        <div className="sticky top-0 z-40 flex items-center justify-between gap-3 bg-amber-50 border-b border-amber-200 px-6 py-2.5 text-sm text-amber-800">
+          <span>
+            ⚠️ <strong>Domain verification pending.</strong> Publish your DNS records and click{" "}
+            <strong>Check DNS</strong> on the Domains page to unlock sending.
+          </span>
+          <a
+            href="/domains"
+            className="shrink-0 rounded-full bg-amber-800 px-3 py-1 text-xs font-semibold text-white transition hover:bg-amber-900"
+          >
+            Go to Domains →
+          </a>
+        </div>
+      )}
+      {children}
+    </AuthContext.Provider>
+  );
 }
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -96,6 +155,8 @@ type CardProps = {
   setTenant: (tenant: AuthContextValue["tenant"]) => void;
   setError: (value: string | null) => void;
   error: string | null;
+  onLoginSuccess: (token: string) => Promise<void>; // existing user — checks API
+  onSignupSuccess: () => void;                       // new user  — always show wizard
 };
 
 // ─── Shell: toggles between Login and Signup ──────────────────────────────────
@@ -140,6 +201,7 @@ function LoginCard({
       const profile = await fetchMe(result.access_token);
       setUser(profile.user);
       setTenant(profile.tenant);
+      await onLoginSuccess(result.access_token);
     } catch (err: any) {
       setError(err?.message ?? "Failed to sign in");
     } finally {
@@ -219,6 +281,7 @@ function SignupCard({
   setTenant,
   setError,
   error,
+  onSignupSuccess,
   onSwitchToLogin,
 }: CardProps & { onSwitchToLogin: () => void }) {
   const [form, setForm] = useState({
@@ -264,6 +327,8 @@ function SignupCard({
       const profile = await fetchMe(session.access_token);
       setUser(profile.user);
       setTenant(profile.tenant);
+      // New signup → always show onboarding (they can't have a domain yet)
+      onSignupSuccess();
     } catch (err: any) {
       setError(err?.message ?? "Failed to create account");
     } finally {

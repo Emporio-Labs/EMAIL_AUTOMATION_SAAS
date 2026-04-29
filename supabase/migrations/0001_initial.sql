@@ -17,6 +17,18 @@ create table if not exists tenant_members (
   unique (tenant_id, user_id)
 );
 
+-- Sending domains per tenant (one tenant → many domains)
+create table if not exists domains (
+  id           uuid primary key default gen_random_uuid(),
+  tenant_id    uuid not null references tenants(id) on delete cascade,
+  domain       text not null,
+  verified     boolean not null default false,
+  dkim_tokens  text[],
+  created_at   timestamptz not null default now(),
+  verified_at  timestamptz,
+  unique (tenant_id, domain)
+);
+
 create table if not exists lists (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id) on delete cascade,
@@ -70,8 +82,12 @@ create table if not exists suppressed (
   unique (tenant_id, email)
 );
 
-create index if not exists idx_tenant_members_user_id on tenant_members(user_id);
-create index if not exists idx_lists_tenant_id on lists(tenant_id);
-create index if not exists idx_contacts_tenant_id on contacts(tenant_id);
-create index if not exists idx_list_contacts_list_id on list_contacts(list_id);
-create index if not exists idx_email_jobs_tenant_id on email_jobs(tenant_id);
+create index if not exists idx_tenant_members_user_id    on tenant_members(user_id);
+create index if not exists idx_domains_tenant_id          on domains(tenant_id);
+create index if not exists idx_domains_verified           on domains(verified);
+create index if not exists idx_lists_tenant_id            on lists(tenant_id);
+create index if not exists idx_contacts_tenant_id         on contacts(tenant_id);
+create index if not exists idx_list_contacts_list_id      on list_contacts(list_id);
+create index if not exists idx_email_jobs_tenant_id       on email_jobs(tenant_id);
+create index if not exists idx_email_jobs_status          on email_jobs(status);
+create index if not exists idx_suppressed_tenant_email    on suppressed(tenant_id, email);

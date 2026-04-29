@@ -13,11 +13,14 @@ export const sendRouter = Router();
 const sendSchema = z.object({
   subject: z.string().trim().min(1).max(200),
   html: z.string().trim().min(1),
-  from: z.string().email().optional(),
+  from: z.string().email('"from" must be a valid email address using your verified domain'),
   toEmails: z.array(z.string().email()).optional(),
   contactIds: z.array(z.string().uuid()).optional(),
   listIds: z.array(z.string().uuid()).optional(),
-});
+}).refine(
+  (val) => (val.toEmails?.length ?? 0) + (val.contactIds?.length ?? 0) + (val.listIds?.length ?? 0) > 0,
+  { message: 'Provide at least one of: toEmails, contactIds, listIds' },
+);
 
 sendRouter.use(requireAuth, requireTenant);
 
@@ -30,7 +33,7 @@ sendRouter.post('/', async (request, response) => {
   }
 
   const tenantId = request.tenant?.id;
-  const fromEmail = parsed.data.from ?? env.DEFAULT_FROM_EMAIL;
+  const fromEmail = parsed.data.from;
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
 
   const [contactRowsResult, listRowsResult] = await Promise.all([
@@ -80,6 +83,57 @@ sendRouter.post('/', async (request, response) => {
   if (uniqueRecipients.length === 0) {
     response.status(400).json({ error: 'No recipients resolved' });
     return;
+  }
+
+  // ── Domain verification guard ───────────────────────────────────────────────
+  // Only allow sending if the from_email domain is registered AND verified
+  // for this tenant. This replaces the old hardcoded DEFAULT_FROM_EMAIL.
+  if (!env.AUTH_BYPASS) {
+    const sendingDomain = fromEmail.split('@')[1]?.toLowerCase();
+
+    // Fetch domain record + first verified domain in one shot
+    const [domainCheck, verifiedDomains] = await Promise.all([
+      supabaseAdmin
+        .from('domains')
+        .select('id, verified')
+        .eq('tenant_id', tenantId as string)
+        .eq('domain', sendingDomain)
+        .maybeSingle(),
+      supabaseAdmin
+        .from('domains')
+        .select('domain')
+        .eq('tenant_id', tenantId as string)
+        .eq('verified', true)
+        .limit(3),
+    ]);
+
+    if (domainCheck.error) {
+      response.status(500).json({ error: 'Failed to check sending domain' });
+      return;
+    }
+
+    const suggestion =
+      (verifiedDomains.data ?? [])
+        .map((d) => `no-reply@${d.domain}`)
+        .join(', ');
+
+    if (!domainCheck.data) {
+      response.status(403).json({
+        error: `Domain "${sendingDomain}" is not registered for this tenant.`,
+        hint: 'Add it at POST /v1/domains, publish the CNAME records, then verify.',
+        verifiedDomains: suggestion || 'No verified domains yet.',
+      });
+      return;
+    }
+
+    if (!domainCheck.data.verified) {
+      response.status(403).json({
+        error: `Domain "${sendingDomain}" is registered but not yet verified.`,
+        hint: `Publish the CNAME records and call GET /v1/domains/${domainCheck.data.id}/verify.`,
+        verifiedDomains: suggestion || 'No verified domains yet.',
+      });
+      return;
+    }
   }
 
   const jobRows = uniqueRecipients.map((email) => ({

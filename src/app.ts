@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import { authRouter } from './routes/auth';
 import { analyticsRouter } from './routes/analytics';
 import { contactsRouter } from './routes/contacts';
+import { domainsRouter } from './routes/domains';
 import { healthRouter } from './routes/health';
 import { internalRouter } from './routes/internal';
 import { listsRouter } from './routes/lists';
@@ -23,6 +24,7 @@ export function createApp() {
   app.use('/v1/auth', authRouter);
   app.use('/v1/analytics', analyticsRouter);
   app.use('/v1/sends', sendsRouter);
+  app.use('/v1/domains', domainsRouter);
   app.use('/v1/lists', listsRouter);
   app.use('/v1/contacts', contactsRouter);
   app.use('/v1/send', sendRouter);

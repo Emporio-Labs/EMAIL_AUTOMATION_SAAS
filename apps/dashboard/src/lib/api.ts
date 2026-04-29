@@ -19,15 +19,21 @@ export async function apiFetch<T>(
 
   if (!response.ok) {
     const text = await response.text();
-    let message = text || "Request failed";
+    let message = text || `Request failed (${response.status})`;
     try {
       const json = JSON.parse(text);
-      if (typeof json.error === "string") message = json.error;
-      else if (typeof json.message === "string") message = json.message;
+      if (typeof json.error === "string") message = `[${response.status}] ${json.error}`;
+      else if (typeof json.message === "string") message = `[${response.status}] ${json.message}`;
     } catch {
-      // keep raw text as fallback
+      message = `[${response.status}] ${text || "Request failed"}`;
     }
     throw new Error(message);
+  }
+
+  // 204 No Content or empty body — return empty object instead of crashing on JSON.parse("")
+  const contentLength = response.headers.get("content-length");
+  if (response.status === 204 || contentLength === "0") {
+    return {} as T;
   }
 
   return response.json() as Promise<T>;

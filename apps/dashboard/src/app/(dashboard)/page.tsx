@@ -87,7 +87,19 @@ export default function OverviewPage() {
                 <p className="text-xs text-muted">Last 30 days</p>
               </div>
               <div className="mt-4">
-                {data?.volume ? <VolumeChart data={data.volume} /> : <div className="h-28" />}
+                {loading ? (
+                  <div className="flex h-28 items-end gap-0.5">
+                    {Array.from({ length: 30 }).map((_, i) => (
+                      <div key={i} className="flex-1 rounded-sm bg-border animate-pulse" style={{ height: `${20 + Math.random() * 40}%` }} />
+                    ))}
+                  </div>
+                ) : data?.volume ? (
+                  <VolumeChart data={data.volume} />
+                ) : (
+                  <div className="flex h-28 items-center justify-center">
+                    <p className="text-xs text-muted">{error ?? "No data"}</p>
+                  </div>
+                )}
               </div>
             </div>
             <div className="rounded-2xl border border-border bg-surface-muted px-4 py-4">
