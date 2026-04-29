@@ -183,6 +183,7 @@ function LoginCard({
   setTenant,
   setError,
   error,
+  onLoginSuccess,
   onSwitchToSignup,
 }: CardProps & { onSwitchToSignup: () => void }) {
   const [email, setEmail] = useState("");
