@@ -10,6 +10,14 @@ declare global {
         slug: string | null;
         role: string;
       };
+      apiKey?: {
+        id: string;
+        tenantId: string;
+        name: string;
+        type: 'sandbox' | 'production';
+        keyPreview: string;
+      };
+      keyType?: 'sandbox' | 'production';
     }
   }
 }
