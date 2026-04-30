@@ -106,6 +106,26 @@ sendRouter.post('/', async (request, response) => {
     return;
   }
 
+  // ── Suppression filter ────────────────────────────────────────────────────
+  // Block any address that has previously bounced or been complained about.
+  const { data: suppressedRows } = await supabaseAdmin
+    .from('suppressed')
+    .select('email')
+    .in('email', uniqueRecipients);
+
+  const suppressedSet = new Set((suppressedRows ?? []).map((r: { email: string }) => r.email));
+  const suppressedRecipients = uniqueRecipients.filter((e) => suppressedSet.has(e));
+  const sendableRecipients = uniqueRecipients.filter((e) => !suppressedSet.has(e));
+
+  if (suppressedRecipients.length > 0) {
+    console.log('[send] Filtered suppressed recipients:', suppressedRecipients);
+  }
+
+  if (sendableRecipients.length === 0) {
+    response.status(422).json({ error: 'All recipients are suppressed', suppressedRecipients });
+    return;
+  }
+
   // ── Domain verification guard ───────────────────────────────────────────────
   // Only allow sending if the from_email domain is registered AND verified
   // for this tenant. This replaces the old hardcoded DEFAULT_FROM_EMAIL.
@@ -192,7 +212,7 @@ sendRouter.post('/', async (request, response) => {
   }
 
   const sentAt = isSandbox ? new Date().toISOString() : null;
-  const jobRows = uniqueRecipients.map((email) => ({
+  const jobRows = sendableRecipients.map((email) => ({
     tenant_id: tenantId as string,
     from_email: fromEmail,
     to_email: email,
@@ -229,7 +249,7 @@ sendRouter.post('/', async (request, response) => {
 
   if (isSandbox) {
     response.status(202).json({
-      accepted: uniqueRecipients.length,
+      accepted: sendableRecipients.length,
       jobIds: jobsToPublish.map((job) => job.job_id),
       sandbox: true,
     });
@@ -247,6 +267,7 @@ sendRouter.post('/', async (request, response) => {
       to: job.to_email,
       subject: job.subject,
       html: job.html,
+      configurationSetName: env.SES_CONFIGURATION_SET,
     });
 
     try {
@@ -274,7 +295,7 @@ sendRouter.post('/', async (request, response) => {
 
   if (publishedJobs.length === 0 && failedJobs.length > 0) {
     response.status(502).json({
-      accepted: uniqueRecipients.length,
+      accepted: sendableRecipients.length,
       jobIds: jobsToPublish.map((job) => job.job_id),
       publishedJobs,
       failedJobs,
@@ -283,7 +304,7 @@ sendRouter.post('/', async (request, response) => {
   }
 
   response.status(failedJobs.length > 0 ? 207 : 202).json({
-    accepted: uniqueRecipients.length,
+    accepted: sendableRecipients.length,
     jobIds: jobsToPublish.map((job) => job.job_id),
     publishedJobs,
     failedJobs,

@@ -135,7 +135,7 @@ Client / Tenant App
                 SNS bounce/complaint
                          │
                          ▼
-         Back to TS API /webhooks/sns
+         Back to TS API /internal/sns
          → INSERT into suppressed table
          → POST to tenant's webhook_url
 ```
@@ -296,7 +296,7 @@ CREATE TABLE email_jobs (
 | GET | `/v1/status/:jobId` | Get delivery status of a job |
 | POST | `/v1/domains/verify` | Start domain verification for tenant |
 | GET | `/v1/domains` | List verified domains |
-| POST | `/webhooks/sns` | Receive bounce/complaint events from SES via SNS |
+| POST | `/internal/sns` | Receive bounce/complaint events from SES via SNS |
 
 ---
 
@@ -397,7 +397,7 @@ OR recipient marks as spam (complaint)
         ↓
 SES fires SNS event
         ↓
-SNS calls POST /webhooks/sns on TS API
+SNS calls POST /internal/sns on TS API
         ↓
 TS API inserts address into suppressed table
         ↓

@@ -9,6 +9,7 @@ export type EmailJobMessage = {
   to: string;
   subject: string;
   html: string;
+  configurationSetName: string;
 };
 
 const client = new SQSClient({
@@ -21,6 +22,7 @@ export function buildEmailJobMessage(input: Omit<EmailJobMessage, 'version'>): s
     ...input,
     job_id: input.jobId,
     tenant_id: input.tenantId,
+    configuration_set_name: input.configurationSetName,
   };
 
   return JSON.stringify(payload);

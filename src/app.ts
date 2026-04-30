@@ -19,6 +19,9 @@ export function createApp() {
 
   app.use(helmet());
   app.use(cors());
+  // Accept raw text bodies from SNS (text/plain) while still allowing JSON routes.
+  // Parse plain text and JSON-like text payloads first, then parse JSON normally.
+  app.use(express.text({ type: ['text/plain', 'application/json'] }));
   app.use(express.json({ limit: '1mb' }));
   app.use(morgan('dev'));
 

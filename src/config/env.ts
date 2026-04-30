@@ -15,6 +15,7 @@ const envSchema = z.object({
   AWS_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   AWS_SESSION_TOKEN: z.string().min(1).optional(),
   SQS_QUEUE_URL: z.string().url(),
+  SES_CONFIGURATION_SET: z.string().min(1).default('email-config'),
   INTERNAL_KEY: z.string().min(16),
 });
 
