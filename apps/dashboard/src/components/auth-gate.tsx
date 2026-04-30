@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, useCallback } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { apiFetch, fetchMe, loginWithPassword, signUpWithPassword } from "@/lib/api";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
 
@@ -27,6 +28,8 @@ const STORAGE_KEY = "swayammail_token";
 // ─── AuthGate ─────────────────────────────────────────────────────────────────
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthContextValue["user"]>(null);
   const [tenant, setTenant] = useState<AuthContextValue["tenant"]>(null);
@@ -78,6 +81,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  useEffect(() => {
+    if (!loading && token && pathname === "/signin") {
+      router.replace("/overview");
+    }
+  }, [loading, token, pathname, router]);
+
   const signOut = () => {
     window.localStorage.removeItem(STORAGE_KEY);
     setToken(null);
@@ -119,6 +128,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         initialEmail={initialEmail}
         initialMode={initialMode}
       />
+    );
+  }
+
+  if (pathname === "/signin") {
+    return (
+      <div className="min-h-screen flex items-center justify-center text-sm text-muted">
+        Redirecting to your workspace...
+      </div>
     );
   }
 

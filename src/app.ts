@@ -9,6 +9,7 @@ import { domainsRouter } from './routes/domains';
 import { healthRouter } from './routes/health';
 import { internalRouter } from './routes/internal';
 import { listsRouter } from './routes/lists';
+import { apiKeysRouter } from './routes/api-keys';
 import { sendsRouter } from './routes/sends';
 import { sendRouter } from './routes/send';
 import { sendingAddressesRouter } from './routes/sending-addresses';
@@ -29,6 +30,7 @@ export function createApp() {
   app.use('/v1/sending-addresses', sendingAddressesRouter);
   app.use('/v1/lists', listsRouter);
   app.use('/v1/contacts', contactsRouter);
+  app.use('/v1/api-keys', apiKeysRouter);
   app.use('/v1/send', sendRouter);
   app.use('/internal', internalRouter);
 

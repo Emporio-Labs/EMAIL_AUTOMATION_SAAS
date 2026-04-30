@@ -4,12 +4,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const navItems = [
-  { href: "/", label: "Overview" },
+  { href: "/overview", label: "Overview" },
   { href: "/sends", label: "Sends" },
   { href: "/contacts", label: "Contacts" },
   { href: "/lists", label: "Lists" },
   { href: "/domains", label: "Domains" },
   { href: "/sending-addresses", label: "Sending addresses" },
+  { href: "/api-keys", label: "API keys" },
 ];
 
 export function Sidebar() {

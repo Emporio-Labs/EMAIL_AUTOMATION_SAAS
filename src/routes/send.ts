@@ -1,8 +1,9 @@
-import { Router } from 'express';
+import { Router, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import { randomUUID } from 'crypto';
 import { env } from '../config/env';
 import { requireAuth } from '../middleware/require-auth';
+import { requireApiKey } from '../middleware/require-api-key';
 import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
@@ -23,7 +24,25 @@ const sendSchema = z.object({
   { message: 'Provide at least one of: toEmails, contactIds, listIds' },
 );
 
-sendRouter.use(requireAuth, requireTenant);
+function hasApiKeyHeader(request: Request): boolean {
+  return typeof request.headers['x-api-key'] !== 'undefined';
+}
+
+async function requireSendAuth(request: Request, response: Response, next: NextFunction): Promise<void> {
+  if (hasApiKeyHeader(request)) {
+    await requireApiKey(request, response, next);
+    return;
+  }
+
+  await requireAuth(request, response, () => undefined);
+  if (response.headersSent) {
+    return;
+  }
+
+  await requireTenant(request, response, next);
+}
+
+sendRouter.use(requireSendAuth);
 
 sendRouter.post('/', async (request, response) => {
   const parsed = sendSchema.safeParse(request.body);
@@ -34,6 +53,7 @@ sendRouter.post('/', async (request, response) => {
   }
 
   const tenantId = request.tenant?.id;
+  const isSandbox = request.keyType === 'sandbox';
   const fromEmail = normalizeEmail(parsed.data.from);
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
 
@@ -171,13 +191,15 @@ sendRouter.post('/', async (request, response) => {
     }
   }
 
+  const sentAt = isSandbox ? new Date().toISOString() : null;
   const jobRows = uniqueRecipients.map((email) => ({
     tenant_id: tenantId as string,
     from_email: fromEmail,
     to_email: email,
     subject: parsed.data.subject,
     html: parsed.data.html,
-    status: 'queued',
+    status: isSandbox ? 'delivered' : 'queued',
+    sent_at: sentAt,
     email_type: parsed.data.emailType,
   }));
 
@@ -204,6 +226,15 @@ sendRouter.post('/', async (request, response) => {
         email_type: job.email_type,
       }))
     : insertedJobs;
+
+  if (isSandbox) {
+    response.status(202).json({
+      accepted: uniqueRecipients.length,
+      jobIds: jobsToPublish.map((job) => job.job_id),
+      sandbox: true,
+    });
+    return;
+  }
 
   const publishedJobs = [] as Array<{ jobId: string; sqsMessageId: string | null }>;
   const failedJobs = [] as Array<{ jobId: string; reason: string }>;

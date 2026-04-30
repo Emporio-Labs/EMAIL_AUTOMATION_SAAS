@@ -1,11 +1,12 @@
 import React from "react";
-import fs from "fs";
-import path from "path";
+import { LandingRedirect } from "@/components/landing-redirect";
 
 // Landing page using the provided static HTML.
 export default function LandingPage() {
   return (
-    <div dangerouslySetInnerHTML={{ __html: `
+        <>
+            <LandingRedirect />
+            <div dangerouslySetInnerHTML={{ __html: `
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -296,6 +297,7 @@ export default function LandingPage() {
     </script>
 </body>
 </html>
-` }} />
+        ` }} />
+        </>
   );
 }
