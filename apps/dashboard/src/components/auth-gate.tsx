@@ -101,6 +101,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }
 
   if (!token) {
+    // Read URL params to allow prefilling signup email and selecting signup mode.
+    const params = new URLSearchParams(window.location.search);
+    const initialEmail = params.get("email");
+    const initialModeParam = params.get("mode");
+    const initialMode = (initialModeParam === "signup" || Boolean(initialEmail)) ? "signup" : "login";
+
     return (
       <AuthCards
         setToken={setToken}
@@ -110,6 +116,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         error={error}
         onLoginSuccess={checkOnboarding}
         onSignupSuccess={() => setNeedsOnboarding(true)}
+        initialEmail={initialEmail}
+        initialMode={initialMode}
       />
     );
   }
@@ -157,19 +165,21 @@ type CardProps = {
   error: string | null;
   onLoginSuccess: (token: string) => Promise<void>; // existing user — checks API
   onSignupSuccess: () => void;                       // new user  — always show wizard
+  initialEmail?: string | null;
+  initialMode?: "login" | "signup";
 };
 
 // ─── Shell: toggles between Login and Signup ──────────────────────────────────
 
 function AuthCards(props: CardProps) {
-  const [mode, setMode] = useState<"login" | "signup">("login");
+  const [mode, setMode] = useState<"login" | "signup">(props.initialMode ?? "login");
 
   return (
     <div className="min-h-screen flex items-center justify-center px-6 py-12">
       {mode === "login" ? (
         <LoginCard {...props} onSwitchToSignup={() => { props.setError(null); setMode("signup"); }} />
       ) : (
-        <SignupCard {...props} onSwitchToLogin={() => { props.setError(null); setMode("login"); }} />
+        <SignupCard {...props} initialEmail={props.initialEmail ?? null} onSwitchToLogin={() => { props.setError(null); setMode("login"); }} />
       )}
     </div>
   );
@@ -283,10 +293,11 @@ function SignupCard({
   error,
   onSignupSuccess,
   onSwitchToLogin,
-}: CardProps & { onSwitchToLogin: () => void }) {
+  initialEmail = null,
+}: CardProps & { onSwitchToLogin: () => void; initialEmail?: string | null }) {
   const [form, setForm] = useState({
     tenantName: "",
-    email: "",
+    email: initialEmail ?? "",
     password: "",
     confirmPassword: "",
   });
