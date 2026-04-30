@@ -15,6 +15,7 @@ type SendItem = {
   to_email: string;
   subject: string;
   status: string;
+  email_type: string;
   created_at: string;
   sent_at: string | null;
   failed_at: string | null;
@@ -48,9 +49,10 @@ export default function SendsPage() {
   const [items, setItems] = useState<SendItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ subject: "", html: "" });
+  const [form, setForm] = useState({ subject: "", html: "", emailType: "marketing" as "transactional" | "marketing" });
   const [sending, setSending] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [emailTypeFilter, setEmailTypeFilter] = useState<"all" | "transactional" | "marketing">("all");
 
   const [fromAddress, setFromAddress] = useState("");
   const [sendingAddresses, setSendingAddresses] = useState<SendingAddress[]>([]);
@@ -194,6 +196,32 @@ export default function SendsPage() {
       (c.last_name ?? "").toLowerCase().includes(contactSearch.toLowerCase())
     ), [contacts, contactSearch]);
 
+  // Calculate analytics by email type
+  const analytics = useMemo(() => {
+    const transactionalItems = items.filter((item) => item.email_type === "transactional");
+    const marketingItems = items.filter((item) => item.email_type === "marketing");
+
+    const calculateStats = (itemsGroup: SendItem[]) => {
+      const total = itemsGroup.length;
+      const sent = itemsGroup.filter((item) => item.status === "sent").length;
+      const failed = itemsGroup.filter((item) => item.status === "failed").length;
+      const successRate = total > 0 ? ((sent / total) * 100).toFixed(1) : "0.0";
+      return { total, sent, failed, successRate };
+    };
+
+    return {
+      transactional: calculateStats(transactionalItems),
+      marketing: calculateStats(marketingItems),
+    };
+  }, [items]);
+
+  // Filter sends by email type
+  const filteredSends = useMemo(() =>
+    emailTypeFilter === "all"
+      ? items
+      : items.filter((item) => item.email_type === emailTypeFilter),
+    [items, emailTypeFilter]);
+
   // Send emails
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
@@ -210,10 +238,10 @@ export default function SendsPage() {
     try {
       const result = await apiFetch<{ accepted: number }>("/v1/send", token, {
         method: "POST",
-        body: JSON.stringify({ subject: form.subject, html: form.html, from: fromAddress, toEmails }),
+        body: JSON.stringify({ subject: form.subject, html: form.html, from: fromAddress, toEmails, emailType: form.emailType }),
       });
       addToast("success", `✅ ${result.accepted} email${result.accepted !== 1 ? "s" : ""} queued successfully!`);
-      setForm({ subject: "", html: "" });
+      setForm({ subject: "", html: "", emailType: "marketing" });
       setRecipientEmails(new Set());
       setTimeout(loadSends, 1500);
     } catch (err: any) {
@@ -280,6 +308,24 @@ export default function SendsPage() {
                   onChange={(e) => setForm({ ...form, subject: e.target.value })}
                   required
                 />
+              </label>
+
+              {/* ── Email Type ──────────────────────────────── */}
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                Email type *
+                <select
+                  id="send-email-type-select"
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  value={form.emailType}
+                  onChange={(e) => setForm({ ...form, emailType: e.target.value as "transactional" | "marketing" })}
+                  required
+                >
+                  <option value="marketing">Marketing</option>
+                  <option value="transactional">Transactional</option>
+                </select>
+                <span className="text-xs text-muted">
+                  {form.emailType === "transactional" ? "Transactional: OTPs, order updates, etc." : "Marketing: Promotions, newsletters, campaigns"}
+                </span>
               </label>
 
               {/* ── Recipients picker ───────────────────────── */}
@@ -461,18 +507,52 @@ export default function SendsPage() {
 
           {/* ── Delivery snapshot ─────────────────────────── */}
           <div className="rounded-3xl border border-border bg-surface-muted px-6 py-6">
-            <h3 className="font-display text-xl">Delivery snapshot</h3>
+            <h3 className="font-display text-xl">Email analytics</h3>
             <p className="mt-2 text-sm text-muted">
-              Track queued, delivered, and failed messages in the Sends table below.
+              Track delivery performance by email type.
             </p>
+            
+            <div className="mt-6 grid gap-4">
+              {/* Transactional Card */}
+              <div className="rounded-xl bg-blue-50 border border-blue-200 px-4 py-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-blue-700">Transactional</p>
+                    <p className="mt-2 text-lg font-bold text-blue-900">{analytics.transactional.total}</p>
+                    <p className="text-xs text-blue-600 mt-1">Success rate: <span className="font-semibold">{analytics.transactional.successRate}%</span></p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-blue-600">Sent: {analytics.transactional.sent}</p>
+                    <p className="text-xs text-blue-600">Failed: {analytics.transactional.failed}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Marketing Card */}
+              <div className="rounded-xl bg-purple-50 border border-purple-200 px-4 py-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <p className="text-xs font-semibold text-purple-700">Marketing</p>
+                    <p className="mt-2 text-lg font-bold text-purple-900">{analytics.marketing.total}</p>
+                    <p className="text-xs text-purple-600 mt-1">Success rate: <span className="font-semibold">{analytics.marketing.successRate}%</span></p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-purple-600">Sent: {analytics.marketing.sent}</p>
+                    <p className="text-xs text-purple-600">Failed: {analytics.marketing.failed}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick snapshot */}
             <div className="mt-6 flex flex-col gap-3 text-sm text-muted">
               <div className="flex items-center justify-between rounded-xl bg-surface px-4 py-3">
                 <span>Queue priority</span>
                 <strong className="text-foreground">Standard</strong>
               </div>
               <div className="flex items-center justify-between rounded-xl bg-surface px-4 py-3">
-                <span>Sends today</span>
-                <strong className="text-foreground">Live</strong>
+                <span>Total sends</span>
+                <strong className="text-foreground">{items.length}</strong>
               </div>
               <div className="flex items-center justify-between rounded-xl bg-surface px-4 py-3">
                 <span>Delivery window</span>
@@ -497,26 +577,57 @@ export default function SendsPage() {
             <h3 className="font-display text-2xl">Recent sends</h3>
             <span className="text-xs text-muted">Latest 20</span>
           </div>
+          
+          {/* ── Email Type Filter ─────────────────────────── */}
+          <div className="mt-4 flex items-center gap-3">
+            <span className="text-sm text-muted">Filter by type:</span>
+            <div className="flex gap-2">
+              {(["all", "transactional", "marketing"] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setEmailTypeFilter(type)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                    emailTypeFilter === type
+                      ? "bg-foreground text-background"
+                      : "bg-surface-muted text-muted hover:text-foreground border border-border"
+                  }`}
+                >
+                  {type === "all" ? "All" : type === "transactional" ? "Transactional" : "Marketing"}
+                </button>
+              ))}
+            </div>
+          </div>
+          
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead className="text-xs uppercase text-muted">
                 <tr className="border-b border-border">
                   <th className="px-2 py-3 text-left">Recipient</th>
                   <th className="px-2 py-3 text-left">Subject</th>
+                  <th className="px-2 py-3 text-left">Type</th>
                   <th className="px-2 py-3 text-left">Status</th>
                   <th className="px-2 py-3 text-left">Created</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td className="px-2 py-4 text-muted" colSpan={4}>Loading sends...</td></tr>
+                  <tr><td className="px-2 py-4 text-muted" colSpan={5}>Loading sends...</td></tr>
                 ) : error ? (
-                  <tr><td className="px-2 py-4 text-red-600" colSpan={4}>{error}</td></tr>
-                ) : items.length ? (
-                  items.map((row) => (
+                  <tr><td className="px-2 py-4 text-red-600" colSpan={5}>{error}</td></tr>
+                ) : filteredSends.length ? (
+                  filteredSends.map((row) => (
                     <tr key={row.job_id} className="border-b border-border/60">
                       <td className="px-2 py-3 text-foreground">{row.to_email}</td>
                       <td className="px-2 py-3 text-muted">{row.subject}</td>
+                      <td className="px-2 py-3">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          row.email_type === "transactional"
+                            ? "bg-blue-100 text-blue-700"
+                            : "bg-purple-100 text-purple-700"
+                        }`}>
+                          {row.email_type === "transactional" ? "Transactional" : "Marketing"}
+                        </span>
+                      </td>
                       <td className="px-2 py-3"><StatusPill status={row.status} /></td>
                       <td className="px-2 py-3 text-muted">
                         {row.created_at ? new Date(row.created_at).toLocaleString() : "—"}
@@ -524,7 +635,7 @@ export default function SendsPage() {
                     </tr>
                   ))
                 ) : (
-                  <tr><td className="px-2 py-4 text-muted" colSpan={4}>No sends found yet.</td></tr>
+                  <tr><td className="px-2 py-4 text-muted" colSpan={5}>No sends found yet.</td></tr>
                 )}
               </tbody>
             </table>

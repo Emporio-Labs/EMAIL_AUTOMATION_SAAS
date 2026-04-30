@@ -17,6 +17,7 @@ const sendSchema = z.object({
   toEmails: z.array(z.string().email()).optional(),
   contactIds: z.array(z.string().uuid()).optional(),
   listIds: z.array(z.string().uuid()).optional(),
+  emailType: z.enum(['transactional', 'marketing']).default('marketing'),
 }).refine(
   (val) => (val.toEmails?.length ?? 0) + (val.contactIds?.length ?? 0) + (val.listIds?.length ?? 0) > 0,
   { message: 'Provide at least one of: toEmails, contactIds, listIds' },
@@ -177,12 +178,13 @@ sendRouter.post('/', async (request, response) => {
     subject: parsed.data.subject,
     html: parsed.data.html,
     status: 'queued',
+    email_type: parsed.data.emailType,
   }));
 
   const { data: insertedJobs, error: insertError } = await supabaseAdmin
     .from('email_jobs')
     .insert(jobRows)
-    .select('job_id, tenant_id, contact_id, list_id, from_email, to_email, subject, html');
+    .select('job_id, tenant_id, contact_id, list_id, from_email, to_email, subject, html, email_type');
 
   if ((insertError || !insertedJobs) && !env.AUTH_BYPASS) {
     response.status(500).json({ error: 'Failed to create email jobs' });
@@ -199,6 +201,7 @@ sendRouter.post('/', async (request, response) => {
         to_email: job.to_email,
         subject: job.subject,
         html: job.html,
+        email_type: job.email_type,
       }))
     : insertedJobs;
 

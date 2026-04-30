@@ -33,7 +33,7 @@ sendsRouter.get('/', async (request, response) => {
 
   let query = supabaseAdmin
     .from('email_jobs')
-    .select('job_id, from_email, to_email, subject, status, created_at, sent_at, failed_at', { count: 'exact' })
+    .select('job_id, from_email, to_email, subject, status, email_type, created_at, sent_at, failed_at', { count: 'exact' })
     .eq('tenant_id', tenantId as string);
 
   if (status) {
