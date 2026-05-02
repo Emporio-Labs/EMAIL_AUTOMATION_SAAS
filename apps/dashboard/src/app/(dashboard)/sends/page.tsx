@@ -30,8 +30,7 @@ type CampaignItem = {
   name: string;
   description: string | null;
   status: "draft" | "scheduled" | "running" | "paused" | "completed";
-  target_list_id: string | null;
-  opted_out_list_id: string | null;
+  contacts_count: number;
   created_at: string;
   updated_at: string;
 };
@@ -42,6 +41,7 @@ type CreateCampaignResponse = { campaign: CampaignItem };
 type ListItem = { id: string; name: string; description: string | null; type: string };
 type Contact = { id: string; email: string; first_name: string | null; last_name: string | null };
 type ListContact = { contact_id: string; contacts: Contact };
+type CampaignContactInput = { email: string; source: "list" | "manual" };
 
 type Toast = { id: number; type: "success" | "error"; message: string };
 
@@ -81,10 +81,12 @@ export default function SendsPage() {
   const [campaignForm, setCampaignForm] = useState({
     name: "",
     description: "",
-    targetListId: "",
-    optedOutListId: "",
+    contacts: {} as Record<string, "list" | "manual">,
   });
   const [campaignFormError, setCampaignFormError] = useState<string | null>(null);
+  const [showAddFromListModal, setShowAddFromListModal] = useState(false);
+  const [campaignManualInput, setCampaignManualInput] = useState("");
+  const [addingFromListId, setAddingFromListId] = useState<string | null>(null);
 
   const [fromAddress, setFromAddress] = useState("");
   const [sendingAddresses, setSendingAddresses] = useState<SendingAddress[]>([]);
@@ -92,7 +94,6 @@ export default function SendsPage() {
 
   // Recipients state — single shared Set
   const [recipientEmails, setRecipientEmails] = useState<Set<string>>(new Set());
-  const [marketingRecipientEmails, setMarketingRecipientEmails] = useState<Set<string>>(new Set());
   const [recipientTab, setRecipientTab] = useState<RecipientTab>("manual");
 
   // Data for lists / contacts tabs
@@ -105,10 +106,10 @@ export default function SendsPage() {
   const [selectedListId, setSelectedListId] = useState("");
   const [loadingListContacts, setLoadingListContacts] = useState(false);
 
-  // Marketing target list state
+  // Marketing campaign state
   const [marketingCampaignId, setMarketingCampaignId] = useState("");
-  const [marketingTargetListId, setMarketingTargetListId] = useState("");
   const [loadingMarketingRecipients, setLoadingMarketingRecipients] = useState(false);
+  const [marketingRecipientEmails, setMarketingRecipientEmails] = useState<Set<string>>(new Set());
 
   // Contacts tab state
   const [contactSearch, setContactSearch] = useState("");
@@ -138,20 +139,20 @@ export default function SendsPage() {
 
   function clearAll() { setRecipientEmails(new Set()); }
 
-  async function loadMarketingRecipients(listId: string) {
-    if (!token || !listId) {
+  async function loadMarketingRecipients(campaignId: string) {
+    if (!token || !campaignId) {
       setMarketingRecipientEmails(new Set());
       return;
     }
 
     setLoadingMarketingRecipients(true);
     try {
-      const res = await apiFetch<{ contacts: ListContact[] }>(`/v1/lists/${listId}/contacts`, token);
-      const emails = res.contacts.map((contact) => contact.contacts.email);
+      const res = await apiFetch<{ contacts: Array<{ email: string; is_subscribed: boolean }> }>(`/v1/campaigns/${campaignId}/contacts`, token);
+      const emails = res.contacts.filter((contact) => contact.is_subscribed).map((contact) => contact.email);
       setMarketingRecipientEmails(new Set(emails));
     } catch {
       setMarketingRecipientEmails(new Set());
-      addToast("error", "Failed to load target list contacts.");
+      addToast("error", "Failed to load campaign contacts.");
     } finally {
       setLoadingMarketingRecipients(false);
     }
@@ -172,7 +173,17 @@ export default function SendsPage() {
     setLoadingCampaigns(true);
     apiFetch<CampaignsResponse>("/v1/campaigns", token)
       .then((res) => { setCampaigns(res.campaigns); setCampaignError(null); })
-      .catch((err) => setCampaignError(err?.message ?? "Failed to load campaigns"))
+      .catch((err) => {
+        const message = err?.message ?? "Failed to load campaigns";
+        if (typeof message === "string" && message.includes("[404]")) {
+          // Backward-compatible fallback when campaigns API is not deployed yet.
+          setCampaigns([]);
+          setCampaignError(null);
+          return;
+        }
+
+        setCampaignError(message);
+      })
       .finally(() => setLoadingCampaigns(false));
   }
 
@@ -217,29 +228,14 @@ export default function SendsPage() {
   useEffect(() => {
     if (emailType !== "marketing" || campaigns.length === 0) return;
     if (!marketingCampaignId || !campaigns.some((campaign) => campaign.id === marketingCampaignId)) {
-      const preferredCampaign = campaigns.find((campaign) => campaign.target_list_id) ?? campaigns[0];
-      setMarketingCampaignId(preferredCampaign.id);
+      setMarketingCampaignId(campaigns[0].id);
     }
   }, [emailType, campaigns, marketingCampaignId]);
 
   useEffect(() => {
-    if (emailType !== "marketing" || lists.length === 0) return;
-    const selectedCampaign = campaigns.find((campaign) => campaign.id === marketingCampaignId);
-    if (selectedCampaign?.target_list_id) {
-      if (selectedCampaign.target_list_id !== marketingTargetListId) {
-        setMarketingTargetListId(selectedCampaign.target_list_id);
-      }
-      return;
-    }
-    if (!marketingTargetListId || !lists.some((list) => list.id === marketingTargetListId)) {
-      setMarketingTargetListId(lists[0].id);
-    }
-  }, [emailType, lists, campaigns, marketingCampaignId, marketingTargetListId]);
-
-  useEffect(() => {
     if (emailType !== "marketing") return;
-    void loadMarketingRecipients(marketingTargetListId);
-  }, [emailType, marketingTargetListId, token]);
+    void loadMarketingRecipients(marketingCampaignId);
+  }, [emailType, marketingCampaignId, token]);
 
   // Load contacts when "contacts" tab is first opened
   useEffect(() => {
@@ -298,6 +294,38 @@ export default function SendsPage() {
     setManualInput("");
   }
 
+  async function handleDeleteCampaign(campaignId: string) {
+    if (!token) return;
+
+    const confirmed = window.confirm("Delete this campaign? This will remove its saved recipient snapshot.");
+    if (!confirmed) return;
+
+    try {
+      await apiFetch<{ success: boolean }>(`/v1/campaigns/${campaignId}`, token, {
+        method: "DELETE",
+      });
+
+      setCampaigns((prev) => prev.filter((campaign) => campaign.id !== campaignId));
+      if (marketingCampaignId === campaignId) {
+        setMarketingCampaignId("");
+        setMarketingRecipientEmails(new Set());
+      }
+      addToast("success", "Campaign deleted.");
+    } catch (err: any) {
+      const message = err?.message ?? "Failed to delete campaign.";
+      if (typeof message === "string" && message.includes("[404]")) {
+        setCampaigns((prev) => prev.filter((campaign) => campaign.id !== campaignId));
+        if (marketingCampaignId === campaignId) {
+          setMarketingCampaignId("");
+          setMarketingRecipientEmails(new Set());
+        }
+        return;
+      }
+
+      addToast("error", message);
+    }
+  }
+
   // Filter contacts by search
   const filteredContacts = useMemo(() =>
     contacts.filter((c) =>
@@ -332,15 +360,21 @@ export default function SendsPage() {
       : items.filter((item) => item.email_type === emailTypeFilter),
     [items, emailTypeFilter]);
 
-  const listNameById = useMemo(() => {
-    return new Map(lists.map((list) => [list.id, list.name]));
-  }, [lists]);
+  const campaignContacts = useMemo(
+    () => Object.entries(campaignForm.contacts).map(([email, source]) => ({ email, source })),
+    [campaignForm.contacts],
+  );
 
   const isMarketing = activeView === "marketing";
 
   async function handleCreateCampaign(event: React.FormEvent) {
     event.preventDefault();
     if (!token) return;
+
+    if (campaignContacts.length === 0) {
+      setCampaignFormError("Add at least one campaign contact.");
+      return;
+    }
 
     setCreatingCampaign(true);
     setCampaignFormError(null);
@@ -351,14 +385,14 @@ export default function SendsPage() {
         body: JSON.stringify({
           name: campaignForm.name,
           description: campaignForm.description || undefined,
-          targetListId: campaignForm.targetListId || undefined,
-          optedOutListId: campaignForm.optedOutListId || undefined,
+          contacts: campaignContacts,
         }),
       });
 
       setCampaigns((prev) => [response.campaign, ...prev]);
       setShowCampaignModal(false);
-      setCampaignForm({ name: "", description: "", targetListId: "", optedOutListId: "" });
+      setCampaignForm({ name: "", description: "", contacts: {} });
+      setCampaignManualInput("");
       router.push(`/sends/campaigns/${response.campaign.id}`);
     } catch (err: any) {
       setCampaignFormError(err?.message ?? "Failed to create campaign");
@@ -367,19 +401,70 @@ export default function SendsPage() {
     }
   }
 
+  function addCampaignContacts(nextContacts: CampaignContactInput[]) {
+    setCampaignForm((prev) => {
+      const merged = { ...prev.contacts };
+      for (const contact of nextContacts) {
+        const email = contact.email.trim().toLowerCase();
+        if (!email) continue;
+        if (!merged[email]) {
+          merged[email] = contact.source;
+        }
+      }
+
+      return { ...prev, contacts: merged };
+    });
+  }
+
+  async function handleAddCampaignContactsFromList(listId: string) {
+    if (!token || !listId) return;
+    setAddingFromListId(listId);
+    try {
+      const res = await apiFetch<{ contacts: ListContact[] }>(`/v1/lists/${listId}/contacts`, token);
+      const listEmails = res.contacts.map((row) => ({ email: row.contacts.email, source: "list" as const }));
+
+      if (listEmails.length === 0) {
+        addToast("error", "This list has no contacts yet.");
+        return;
+      }
+
+      addCampaignContacts(listEmails);
+      addToast("success", `Added ${listEmails.length} contact${listEmails.length === 1 ? "" : "s"} from list.`);
+    } catch {
+      addToast("error", "Failed to load list contacts.");
+    } finally {
+      setAddingFromListId(null);
+    }
+  }
+
+  function handleAddCampaignManualContacts() {
+    const manualContacts = campaignManualInput
+      .split(",")
+      .map((email) => email.trim().toLowerCase())
+      .filter(Boolean)
+      .map((email) => ({ email, source: "manual" as const }));
+
+    if (manualContacts.length === 0) return;
+
+    addCampaignContacts(manualContacts);
+    setCampaignManualInput("");
+  }
+
+  function removeCampaignContact(email: string) {
+    setCampaignForm((prev) => {
+      const next = { ...prev.contacts };
+      delete next[email];
+      return { ...prev, contacts: next };
+    });
+  }
+
   // Send emails
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
-    const toEmails = emailType === "marketing" ? Array.from(marketingRecipientEmails) : Array.from(recipientEmails);
-    const selectedCampaign = campaigns.find((campaign) => campaign.id === marketingCampaignId);
+    const toEmails = Array.from(recipientEmails);
 
     if (emailType === "marketing" && !marketingCampaignId) {
       addToast("error", "Select a campaign before sending marketing emails.");
-      return;
-    }
-
-    if (emailType === "marketing" && !selectedCampaign?.target_list_id) {
-      addToast("error", "Selected campaign has no target list. Update campaign first.");
       return;
     }
 
@@ -393,14 +478,13 @@ export default function SendsPage() {
     }
     setSending(true);
     try {
-      const recipients = emailType === "marketing" ? Array.from(marketingRecipientEmails) : toEmails;
       const result = await apiFetch<{ accepted: number }>("/v1/send", token, {
         method: "POST",
         body: JSON.stringify({
           subject: form.subject,
           html: form.html,
           from: fromAddress,
-          toEmails: recipients,
+          toEmails,
           campaignId: emailType === "marketing" ? marketingCampaignId : undefined,
           emailType,
         }),
@@ -518,7 +602,7 @@ export default function SendsPage() {
               {/* ── Recipients picker ───────────────────────── */}
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted">{emailType === "marketing" ? "Target list *" : "Recipients *"}</span>
+                  <span className="text-sm text-muted">{emailType === "marketing" ? "Campaign recipients *" : "Recipients *"}</span>
                   {emailType === "transactional" && recipientEmails.size > 0 && (
                     <button type="button" onClick={clearAll} className="text-xs text-muted hover:text-red-500 transition">
                       Clear all ({recipientEmails.size})
@@ -528,12 +612,10 @@ export default function SendsPage() {
 
                 {emailType === "marketing" ? (
                   <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
-                      {loadingLists || loadingCampaigns ? (
-                      <p className="text-xs text-muted">Loading lists...</p>
+                      {loadingCampaigns ? (
+                      <p className="text-xs text-muted">Loading campaigns...</p>
                       ) : campaigns.length === 0 ? (
                         <p className="text-xs text-muted">No campaigns found. Create a campaign first.</p>
-                      ) : lists.length === 0 ? (
-                      <p className="text-xs text-muted">No lists found. Create a list first.</p>
                     ) : (
                       <>
                           <select
@@ -543,26 +625,12 @@ export default function SendsPage() {
                             onChange={(e) => setMarketingCampaignId(e.target.value)}
                           >
                             {campaigns.map((campaign) => (
-                              <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+                              <option key={campaign.id} value={campaign.id}>{campaign.name} ({campaign.contacts_count} contacts)</option>
                             ))}
                           </select>
-                        <select
-                          id="marketing-target-list-select"
-                          className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent"
-                          value={marketingTargetListId}
-                          onChange={(e) => setMarketingTargetListId(e.target.value)}
-                            disabled={Boolean(campaigns.find((campaign) => campaign.id === marketingCampaignId)?.target_list_id)}
-                        >
-                          {lists.filter((list) => list.type === 'marketing').map((list) => (
-                            <option key={list.id} value={list.id}>{list.name}</option>
-                          ))}
-                        </select>
-                          <p className="text-xs text-muted">
-                            Campaign: {campaigns.find((campaign) => campaign.id === marketingCampaignId)?.name ?? "Not selected"}
-                          </p>
                         <p className="text-xs text-muted">
                           {loadingMarketingRecipients
-                            ? "Loading target list contacts..."
+                            ? "Loading campaign contacts..."
                             : `${marketingRecipientEmails.size} recipient${marketingRecipientEmails.size === 1 ? "" : "s"} ready to send.`}
                         </p>
                       </>
@@ -897,11 +965,11 @@ export default function SendsPage() {
                   <tr className="border-b border-border">
                     <th className="px-2 py-3 text-left">Campaign name</th>
                     <th className="px-2 py-3 text-left">Description</th>
-                    <th className="px-2 py-3 text-left">Target list</th>
-                    <th className="px-2 py-3 text-left">Opted out list</th>
+                    <th className="px-2 py-3 text-left">Contacts</th>
                     <th className="px-2 py-3 text-left">Mail history</th>
                     <th className="px-2 py-3 text-left">Analytics</th>
                     <th className="px-2 py-3 text-left">Send</th>
+                    <th className="px-2 py-3 text-left">Delete</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -915,20 +983,7 @@ export default function SendsPage() {
                         <td className="px-2 py-3 text-foreground font-medium">{campaign.name}</td>
                         <td className="px-2 py-3 text-muted">{campaign.description ?? "—"}</td>
                         <td className="px-2 py-3 text-muted">
-                          <div className="flex items-center gap-2">
-                            <span>{campaign.target_list_id ? (listNameById.get(campaign.target_list_id) ?? "Selected list") : "—"}</span>
-                            <Link href={`/sends/campaigns/${campaign.id}/target-list`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
-                              View
-                            </Link>
-                          </div>
-                        </td>
-                        <td className="px-2 py-3 text-muted">
-                          <div className="flex items-center gap-2">
-                            <span>{campaign.opted_out_list_id ? (listNameById.get(campaign.opted_out_list_id) ?? "Selected list") : "—"}</span>
-                            <Link href={`/sends/campaigns/${campaign.id}/opted-out-list`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
-                              View
-                            </Link>
-                          </div>
+                          {campaign.contacts_count} contact{campaign.contacts_count === 1 ? "" : "s"}
                         </td>
                         <td className="px-2 py-3 text-muted">
                           <Link href={`/sends/campaigns/${campaign.id}/mail-history`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
@@ -941,13 +996,22 @@ export default function SendsPage() {
                           </Link>
                         </td>
                         <td className="px-2 py-3 text-muted">
-                          {campaign.target_list_id ? (
+                          {campaign.contacts_count > 0 ? (
                             <Link href={`/sends/campaigns/${campaign.id}`} className="h-7 rounded-full border border-foreground px-3 text-xs font-semibold text-foreground bg-foreground/10 transition hover:bg-foreground hover:text-background inline-flex items-center">
                               Send
                             </Link>
                           ) : (
-                            <span className="text-xs text-muted">No list</span>
+                            <span className="text-xs text-muted">No contacts</span>
                           )}
+                        </td>
+                        <td className="px-2 py-3 text-muted">
+                          <button
+                            type="button"
+                            onClick={() => void handleDeleteCampaign(campaign.id)}
+                            className="h-7 rounded-full border border-red-200 px-3 text-xs font-semibold text-red-600 transition hover:bg-red-50 inline-flex items-center"
+                          >
+                            Delete
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -997,31 +1061,56 @@ export default function SendsPage() {
               </label>
 
               <label className="flex flex-col gap-2 text-sm text-muted">
-                Target list
-                <select
-                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
-                  value={campaignForm.targetListId}
-                  onChange={(e) => setCampaignForm({ ...campaignForm, targetListId: e.target.value })}
-                >
-                  <option value="">Select a target list</option>
-                  {lists.filter((list) => list.type === 'marketing').map((list) => (
-                    <option key={list.id} value={list.id}>{list.name}</option>
-                  ))}
-                </select>
-              </label>
+                Campaign Contacts
+                <div className="rounded-xl border border-border bg-surface-muted px-4 py-3 flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="h-9 rounded-full border border-border px-4 text-xs font-semibold text-foreground transition hover:bg-surface"
+                      onClick={() => setShowAddFromListModal(true)}
+                    >
+                      + Add from list
+                    </button>
+                    <button
+                      type="button"
+                      className="h-9 rounded-full border border-border px-4 text-xs font-semibold text-foreground transition hover:bg-surface"
+                      onClick={handleAddCampaignManualContacts}
+                      disabled={!campaignManualInput.trim()}
+                    >
+                      + Add manually
+                    </button>
+                  </div>
 
-              <label className="flex flex-col gap-2 text-sm text-muted">
-                Opted out list
-                <select
-                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
-                  value={campaignForm.optedOutListId}
-                  onChange={(e) => setCampaignForm({ ...campaignForm, optedOutListId: e.target.value })}
-                >
-                  <option value="">Select an opted out list</option>
-                  {lists.map((list) => (
-                    <option key={list.id} value={list.id}>{list.name}</option>
-                  ))}
-                </select>
+                  <textarea
+                    className="min-h-[72px] rounded-xl border border-border bg-surface px-4 py-3 text-sm text-foreground outline-none focus:border-accent resize-none"
+                    placeholder="john@example.com, jane@example.com"
+                    value={campaignManualInput}
+                    onChange={(event) => setCampaignManualInput(event.target.value)}
+                  />
+
+                  <p className="text-xs text-muted">{campaignContacts.length} contacts added</p>
+
+                  {campaignContacts.length > 0 && (
+                    <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-border bg-surface px-3 py-2">
+                      {campaignContacts.map((contact) => (
+                        <span
+                          key={contact.email}
+                          className="inline-flex items-center gap-1 rounded-full bg-surface-muted border border-border px-2.5 py-0.5 text-xs text-foreground"
+                        >
+                          {contact.email}
+                          <button
+                            type="button"
+                            onClick={() => removeCampaignContact(contact.email)}
+                            className="text-muted hover:text-red-500 transition leading-none text-sm"
+                            aria-label={`Remove ${contact.email}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </label>
 
               {campaignFormError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">{campaignFormError}</p>}
@@ -1035,6 +1124,54 @@ export default function SendsPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showAddFromListModal && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-sm fade-in"
+          onClick={(event) => { if (event.target === event.currentTarget) setShowAddFromListModal(false); }}
+        >
+          <div className="w-full max-w-2xl rounded-3xl border border-border bg-surface px-8 py-8 card-shadow fade-in">
+            <div className="mb-4 flex items-center justify-between">
+              <h3 className="font-display text-2xl">Add contacts from list</h3>
+              <button
+                type="button"
+                onClick={() => setShowAddFromListModal(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface-muted transition"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="max-h-[420px] overflow-y-auto rounded-xl border border-border bg-surface-muted">
+              {loadingLists ? (
+                <p className="p-4 text-sm text-muted">Loading lists...</p>
+              ) : lists.length === 0 ? (
+                <p className="p-4 text-sm text-muted">No lists found.</p>
+              ) : (
+                <div className="divide-y divide-border">
+                  {lists.map((list) => (
+                    <div key={list.id} className="flex items-center justify-between gap-3 p-4">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{list.name}</p>
+                        <p className="text-xs text-muted">{list.type} list</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleAddCampaignContactsFromList(list.id)}
+                        disabled={addingFromListId === list.id}
+                        className="h-9 rounded-full bg-foreground px-4 text-xs font-semibold text-background transition hover:opacity-80 disabled:opacity-60"
+                      >
+                        {addingFromListId === list.id ? "Adding..." : "Add contacts"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

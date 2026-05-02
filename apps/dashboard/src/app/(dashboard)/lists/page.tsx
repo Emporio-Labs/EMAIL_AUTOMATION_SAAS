@@ -11,6 +11,7 @@ type ListItem = {
   id: string;
   name: string;
   description: string | null;
+  type: "marketing" | "contact";
   created_at: string;
 };
 
@@ -39,7 +40,11 @@ export default function ListsPage() {
 
   // Create list modal
   const [showCreateModal, setShowCreateModal] = useState(false);
-  const [createForm, setCreateForm] = useState({ name: "", description: "" });
+  const [createForm, setCreateForm] = useState<{ name: string; description: string; type: "marketing" }>({
+    name: "",
+    description: "",
+    type: "marketing",
+  });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -68,11 +73,13 @@ export default function ListsPage() {
         body: JSON.stringify({
           name: createForm.name,
           description: createForm.description || undefined,
+          type: createForm.type,
         }),
       });
       setItems((prev) => [res.list, ...prev]);
+      setSelectedList(res.list);
       setShowCreateModal(false);
-      setCreateForm({ name: "", description: "" });
+      setCreateForm({ name: "", description: "", type: "marketing" });
     } catch (err: any) {
       setCreateError(err?.message ?? "Failed to create list");
     } finally {
@@ -81,7 +88,7 @@ export default function ListsPage() {
   }
 
   function openCreate() {
-    setCreateForm({ name: "", description: "" });
+    setCreateForm({ name: "", description: "", type: "marketing" });
     setCreateError(null);
     setShowCreateModal(true);
   }
@@ -111,15 +118,16 @@ export default function ListsPage() {
                 <tr className="border-b border-border">
                   <th className="px-2 py-3 text-left">List</th>
                   <th className="px-2 py-3 text-left">Description</th>
+                  <th className="px-2 py-3 text-left">Type</th>
                   <th className="px-2 py-3 text-left">Created</th>
                   <th className="px-2 py-3 text-left">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td className="px-2 py-4 text-muted" colSpan={4}>Loading lists...</td></tr>
+                  <tr><td className="px-2 py-4 text-muted" colSpan={5}>Loading lists...</td></tr>
                 ) : error ? (
-                  <tr><td className="px-2 py-4 text-red-600" colSpan={4}>{error}</td></tr>
+                  <tr><td className="px-2 py-4 text-red-600" colSpan={5}>{error}</td></tr>
                 ) : items.length ? (
                   items.map((row) => (
                     <tr
@@ -128,6 +136,13 @@ export default function ListsPage() {
                     >
                       <td className="px-2 py-3 text-foreground font-medium">{row.name}</td>
                       <td className="px-2 py-3 text-muted">{row.description ?? "—"}</td>
+                      <td className="px-2 py-3 text-muted">
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          row.type === "marketing" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"
+                        }`}>
+                          {row.type === "marketing" ? "Marketing" : "Contact"}
+                        </span>
+                      </td>
                       <td className="px-2 py-3 text-muted">
                         {row.created_at ? new Date(row.created_at).toLocaleDateString() : "—"}
                       </td>
@@ -143,7 +158,7 @@ export default function ListsPage() {
                   ))
                 ) : (
                   <tr>
-                    <td className="px-2 py-8 text-center text-muted" colSpan={4}>
+                    <td className="px-2 py-8 text-center text-muted" colSpan={5}>
                       No lists yet.{" "}
                       <button onClick={openCreate} className="text-accent-dark font-semibold hover:underline underline-offset-2">
                         Create your first list →
@@ -189,6 +204,17 @@ export default function ListsPage() {
                   value={createForm.description}
                   onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
                 />
+              </label>
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                List type *
+                <select
+                  id="list-type-select"
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  value={createForm.type}
+                  onChange={(e) => setCreateForm({ ...createForm, type: e.target.value as "marketing" })}
+                >
+                  <option value="marketing">Marketing</option>
+                </select>
               </label>
               {createError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">{createError}</p>}
               <div className="flex gap-3 mt-2">

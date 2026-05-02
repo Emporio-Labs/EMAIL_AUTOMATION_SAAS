@@ -21,8 +21,15 @@ const sendSchema = z.object({
   campaignId: z.string().uuid().optional(),
   emailType: z.enum(['transactional', 'marketing']).default('marketing'),
 }).refine(
-  (val) => (val.toEmails?.length ?? 0) + (val.contactIds?.length ?? 0) + (val.listIds?.length ?? 0) > 0,
-  { message: 'Provide at least one of: toEmails, contactIds, listIds' },
+  (val) => {
+    const explicitRecipientCount = (val.toEmails?.length ?? 0) + (val.contactIds?.length ?? 0) + (val.listIds?.length ?? 0);
+    if (explicitRecipientCount > 0) {
+      return true;
+    }
+
+    return Boolean(val.campaignId && val.emailType === 'marketing');
+  },
+  { message: 'Provide recipients via toEmails/contactIds/listIds or marketing campaignId' },
 );
 
 function hasApiKeyHeader(request: Request): boolean {
@@ -58,6 +65,8 @@ sendRouter.post('/', async (request, response) => {
   const fromEmail = normalizeEmail(parsed.data.from);
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
 
+  let campaignRecipients: string[] = [];
+
   if (parsed.data.campaignId) {
     const { data: campaignRow, error: campaignError } = await supabaseAdmin
       .from('campaigns')
@@ -69,6 +78,38 @@ sendRouter.post('/', async (request, response) => {
     if ((campaignError || !campaignRow) && !env.AUTH_BYPASS) {
       response.status(404).json({ error: 'Campaign not found for this tenant' });
       return;
+    }
+
+    if (parsed.data.emailType === 'marketing') {
+      const { data: campaignContacts, error: campaignContactsError } = await supabaseAdmin
+        .from('campaign_contacts')
+        .select('email')
+        .eq('campaign_id', parsed.data.campaignId);
+
+      if (campaignContactsError && !env.AUTH_BYPASS) {
+        response.status(500).json({ error: 'Failed to resolve campaign contacts' });
+        return;
+      }
+
+      const campaignEmails = Array.from(new Set((campaignContacts ?? []).map((row) => normalizeEmail(row.email))));
+      if (campaignEmails.length === 0) {
+        response.status(400).json({ error: 'Campaign has no recipients' });
+        return;
+      }
+
+      const { data: subscribedContacts, error: subscribedContactsError } = await supabaseAdmin
+        .from('contacts')
+        .select('email')
+        .eq('tenant_id', tenantId as string)
+        .eq('is_subscribed', true)
+        .in('email', campaignEmails);
+
+      if (subscribedContactsError && !env.AUTH_BYPASS) {
+        response.status(500).json({ error: 'Failed to resolve subscribed campaign contacts' });
+        return;
+      }
+
+      campaignRecipients = Array.from(new Set((subscribedContacts ?? []).map((row) => normalizeEmail(row.email))));
     }
   }
 
@@ -114,7 +155,9 @@ sendRouter.post('/', async (request, response) => {
     return [];
   });
 
-  const uniqueRecipients = Array.from(new Set([...directRecipients, ...resolvedFromContacts, ...resolvedFromLists]));
+  const uniqueRecipients = parsed.data.campaignId && parsed.data.emailType === 'marketing'
+    ? campaignRecipients
+    : Array.from(new Set([...directRecipients, ...resolvedFromContacts, ...resolvedFromLists]));
 
   if (uniqueRecipients.length === 0) {
     response.status(400).json({ error: 'No recipients resolved' });

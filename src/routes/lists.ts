@@ -12,6 +12,7 @@ export const listsRouter = Router();
 const listSchema = z.object({
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(500).optional(),
+  type: z.enum(['marketing', 'contact']).default('contact'),
 });
 
 const addContactsSchema = z.object({
@@ -61,6 +62,7 @@ listsRouter.post('/', async (request, response) => {
       tenant_id: tenantId as string,
       name: parsed.data.name,
       description: parsed.data.description ?? null,
+      type: parsed.data.type,
     })
     .select('id, name, description, type, created_at, updated_at')
     .single();
@@ -72,6 +74,7 @@ listsRouter.post('/', async (request, response) => {
           id: crypto.randomUUID(),
           name: parsed.data.name,
           description: parsed.data.description ?? null,
+          type: parsed.data.type,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         },

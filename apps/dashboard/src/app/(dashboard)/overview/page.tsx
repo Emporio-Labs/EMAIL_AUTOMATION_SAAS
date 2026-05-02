@@ -1,12 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
 import { Topbar } from "@/components/topbar";
 import { MetricCard } from "@/components/metric-card";
 import { StatusPill } from "@/components/status-pill";
 import { VolumeChart } from "@/components/volume-chart";
+
+type RecentActivity = {
+  job_id: string;
+  to_email: string;
+  subject: string;
+  status: string;
+  created_at: string;
+  sent_at: string | null;
+  failed_at: string | null;
+};
 
 type OverviewResponse = {
   rangeDays: number;
@@ -23,22 +34,25 @@ type OverviewResponse = {
     bounceRate: number;
     complaintRate: number;
   };
-  recent: Array<{
-    job_id: string;
-    to_email: string;
-    subject: string;
-    status: string;
-    created_at: string;
-    sent_at: string | null;
-    failed_at: string | null;
-  }>;
+  recent: RecentActivity[];
+};
+
+type SendsResponse = {
+  page: number;
+  limit: number;
+  total: number;
+  items: RecentActivity[];
 };
 
 export default function OverviewPage() {
   const { token } = useAuth();
   const [data, setData] = useState<OverviewResponse | null>(null);
+  const [recentItems, setRecentItems] = useState<RecentActivity[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(2);
+  const [hasMore, setHasMore] = useState(true);
 
   useEffect(() => {
     if (!token) {
@@ -49,13 +63,33 @@ export default function OverviewPage() {
     apiFetch<OverviewResponse>("/v1/analytics/overview?days=30", token)
       .then((response) => {
         setData(response);
+        setRecentItems(response.recent || []);
         setError(null);
+        setPage(2);
+        setHasMore((response.recent?.length ?? 0) >= 20);
       })
       .catch((err) => {
         setError(err?.message ?? "Failed to load analytics");
       })
       .finally(() => setLoading(false));
   }, [token]);
+
+  async function loadMore() {
+    if (!token || loadingMore || !hasMore) return;
+    
+    setLoadingMore(true);
+    try {
+      const res = await apiFetch<SendsResponse>(`/v1/sends?page=${page}&limit=20`, token);
+      const newItems = res.items || [];
+      setRecentItems((prev) => [...prev, ...newItems]);
+      setPage((prev) => prev + 1);
+      setHasMore(newItems.length >= 20);
+    } catch (err) {
+      console.error('Failed to load more items:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -132,7 +166,7 @@ export default function OverviewPage() {
         <section className="rounded-3xl border border-border bg-surface px-6 py-6 card-shadow fade-in-delay-1">
           <div className="flex items-center justify-between">
             <h3 className="font-display text-2xl">Recent activity</h3>
-            <span className="text-xs text-muted">Last 20 sends</span>
+            <span className="text-xs text-muted">{recentItems.length} sends</span>
           </div>
 
           <div className="mt-4 overflow-x-auto">
@@ -158,8 +192,8 @@ export default function OverviewPage() {
                       {error}
                     </td>
                   </tr>
-                ) : data?.recent.length ? (
-                  data.recent.map((row) => (
+                ) : recentItems.length ? (
+                  recentItems.map((row) => (
                     <tr key={row.job_id} className="border-b border-border/60">
                       <td className="px-2 py-3 text-foreground">{row.to_email}</td>
                       <td className="px-2 py-3 text-muted">{row.subject}</td>
@@ -181,6 +215,18 @@ export default function OverviewPage() {
               </tbody>
             </table>
           </div>
+
+          {!loading && !error && recentItems.length > 0 && hasMore && (
+            <div className="mt-6 flex justify-center">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="h-10 rounded-full bg-accent px-6 text-sm font-semibold text-accent-foreground transition hover:opacity-90 active:scale-95 disabled:opacity-60"
+              >
+                {loadingMore ? "Loading..." : "Load more →"}
+              </button>
+            </div>
+          )}
         </section>
       </main>
     </div>

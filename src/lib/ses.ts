@@ -63,7 +63,7 @@ export async function sesGetDomainStatus(domain: string): Promise<SesIdentitySta
 
   const dkimStatus = response.DkimAttributes?.Status ?? 'NOT_STARTED';
   const dkimVerified = dkimStatus === 'SUCCESS';
-  const sendingEnabled = response.SendingAttributes?.SendingEnabled ?? false;
+  const sendingEnabled = (response as any).SendingAttributes?.SendingEnabled ?? false;
 
   return { dkimVerified, sendingEnabled, dkimStatus };
 }

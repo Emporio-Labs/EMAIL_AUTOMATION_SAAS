@@ -13,6 +13,7 @@ import { listsRouter } from './routes/lists';
 import { apiKeysRouter } from './routes/api-keys';
 import { sendsRouter } from './routes/sends';
 import { sendRouter } from './routes/send';
+import { unsubscribeRouter } from './routes/unsubscribe';
 import { sendingAddressesRouter } from './routes/sending-addresses';
 
 export function createApp() {
@@ -20,10 +21,9 @@ export function createApp() {
 
   app.use(helmet());
   app.use(cors());
-  // Accept raw text bodies from SNS (text/plain) while still allowing JSON routes.
-  // Parse plain text and JSON-like text payloads first, then parse JSON normally.
-  app.use(express.text({ type: ['text/plain', 'application/json'] }));
+  // Parse JSON routes normally, then accept raw text only for SNS webhooks.
   app.use(express.json({ limit: '1mb' }));
+  app.use(express.text({ type: 'text/plain' }));
   app.use(morgan('dev'));
 
   app.use('/health', healthRouter);
@@ -37,6 +37,7 @@ export function createApp() {
   app.use('/v1/contacts', contactsRouter);
   app.use('/v1/api-keys', apiKeysRouter);
   app.use('/v1/send', sendRouter);
+  app.use('/v1/unsubscribe', unsubscribeRouter);
   app.use('/internal', internalRouter);
 
   app.use((_request, response) => {

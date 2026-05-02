@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
 
@@ -11,8 +12,7 @@ export type CampaignItem = {
   name: string;
   description: string | null;
   status: "draft" | "scheduled" | "running" | "paused" | "completed";
-  target_list_id: string | null;
-  opted_out_list_id: string | null;
+  contacts_count: number;
   created_at: string;
   updated_at: string;
 };
@@ -43,33 +43,28 @@ type SuppressionItem = {
 
 type SuppressionResponse = { items: SuppressionItem[] };
 
-type ListItem = { id: string; name: string; description: string | null };
-type ListsResponse = { lists: ListItem[] };
-
-type ListContact = {
-  contact_id: string;
-  contacts: {
-    id: string;
-    email: string;
-    first_name: string | null;
-    last_name: string | null;
-  };
+type CampaignContactItem = {
+  id: string;
+  campaign_id: string;
+  email: string;
+  source_type: "list" | "manual";
+  is_subscribed: boolean;
+  created_at: string;
 };
 
-type ListContactsResponse = { contacts: ListContact[] };
+type CampaignContactsResponse = { contacts: CampaignContactItem[] };
 
 type CampaignSection = "target-list" | "opted-out-list" | "mail-history" | "analytics";
 
 export function CampaignDetailView({ campaignId, section }: { campaignId: string; section: CampaignSection }) {
   const { token } = useAuth();
+  const router = useRouter();
 
   const [campaign, setCampaign] = useState<CampaignItem | null>(null);
   const [history, setHistory] = useState<CampaignHistoryItem[]>([]);
-  const [lists, setLists] = useState<ListItem[]>([]);
-  const [listContacts, setListContacts] = useState<ListContact[]>([]);
+  const [campaignContacts, setCampaignContacts] = useState<CampaignContactItem[]>([]);
   const [suppressionItems, setSuppressionItems] = useState<SuppressionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingListContacts, setLoadingListContacts] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatingStatus, setUpdatingStatus] = useState(false);
 
@@ -80,14 +75,14 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
     Promise.all([
       apiFetch<CampaignResponse>(`/v1/campaigns/${campaignId}`, token),
       apiFetch<CampaignHistoryResponse>(`/v1/campaigns/${campaignId}/history`, token),
+      apiFetch<CampaignContactsResponse>(`/v1/campaigns/${campaignId}/contacts`, token),
       apiFetch<SuppressionResponse>(`/v1/campaigns/${campaignId}/suppression`, token),
-      apiFetch<ListsResponse>("/v1/lists", token),
     ])
-      .then(([campaignResponse, historyResponse, suppressionResponse, listsResponse]) => {
+      .then(([campaignResponse, historyResponse, contactsResponse, suppressionResponse]) => {
         setCampaign(campaignResponse.campaign);
         setHistory(historyResponse.items);
+        setCampaignContacts(contactsResponse.contacts);
         setSuppressionItems(suppressionResponse.items);
-        setLists(listsResponse.lists);
         setError(null);
       })
       .catch((err) => setError(err?.message ?? "Failed to load campaign"))
@@ -96,16 +91,6 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
 
   useEffect(() => {
     loadCampaignData();
-  }, [campaignId, token]);
-
-  useEffect(() => {
-    if (!token || !campaignId) return;
-
-    const interval = window.setInterval(() => {
-      loadCampaignData();
-    }, 20000);
-
-    return () => window.clearInterval(interval);
   }, [campaignId, token]);
 
   const analytics = useMemo(() => {
@@ -124,15 +109,26 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
 
     const recentDays = Array.from(trendByDay.entries()).slice(-7);
     const latestActivity = history[0]?.created_at ?? null;
-    const suppressedCount = suppressionItems.length;
+    const subscribedRecipients = campaignContacts.filter((item) => item.is_subscribed).length;
+    const unsubscribedRecipients = campaignContacts.filter((item) => !item.is_subscribed).length;
     const complaintCount = suppressionItems.filter((item) => item.reason.toLowerCase() === "complaint").length;
     const bounceCount = suppressionItems.filter((item) => item.reason.toLowerCase() === "bounce").length;
 
-    return { total, sent, failed, queued, deliveryRate, failureRate, recentDays, latestActivity, suppressedCount, complaintCount, bounceCount };
-  }, [history, suppressionItems]);
-
-  const selectedListId = section === "target-list" ? campaign?.target_list_id : campaign?.opted_out_list_id;
-  const selectedList = lists.find((list) => list.id === selectedListId) ?? null;
+    return {
+      total,
+      sent,
+      failed,
+      queued,
+      deliveryRate,
+      failureRate,
+      recentDays,
+      latestActivity,
+      subscribedRecipients,
+      unsubscribedRecipients,
+      complaintCount,
+      bounceCount,
+    };
+  }, [history, suppressionItems, campaignContacts]);
 
   async function handleStatusChange(nextStatus: CampaignItem["status"]) {
     if (!token || !campaign) return;
@@ -150,15 +146,31 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
     }
   }
 
-  useEffect(() => {
-    if (!token || !selectedListId) return;
+  async function handleDeleteCampaign() {
+    if (!token || !campaign) return;
 
-    setLoadingListContacts(true);
-    apiFetch<ListContactsResponse>(`/v1/lists/${selectedListId}/contacts`, token)
-      .then((response) => setListContacts(response.contacts))
-      .catch(() => setListContacts([]))
-      .finally(() => setLoadingListContacts(false));
-  }, [selectedListId, token]);
+    const confirmed = window.confirm("Delete this campaign? This will remove its saved recipient snapshot.");
+    if (!confirmed) return;
+
+    try {
+      await apiFetch<{ success: boolean }>(`/v1/campaigns/${campaign.id}`, token, {
+        method: "DELETE",
+      });
+
+      router.push("/sends");
+    } catch (err: any) {
+      const message = err?.message ?? "";
+      if (typeof message === "string" && message.includes("[404]")) {
+        router.push("/sends");
+        return;
+      }
+
+      // keep the current page visible so the user can retry
+    }
+  }
+
+  const recipientsView = campaignContacts;
+  const unsubscribedView = campaignContacts.filter((item) => !item.is_subscribed);
 
   return (
     <section className="rounded-3xl border border-border bg-surface px-6 py-6 card-shadow fade-in">
@@ -197,41 +209,38 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
             </div>
           </div>
 
-          {section === "target-list" || section === "opted-out-list" ? (
+          {(section === "target-list" || section === "opted-out-list") && (
             <div className="mt-6 rounded-2xl border border-border bg-surface-muted px-5 py-5">
-              <p className="text-xs uppercase text-muted">{section === "target-list" ? "Target list" : "Opted out list"}</p>
-              <p className="mt-2 text-lg font-semibold text-foreground">{selectedList?.name ?? selectedListId ?? "Not set"}</p>
-              {selectedList?.description ? <p className="mt-1 text-sm text-muted">{selectedList.description}</p> : null}
+              <p className="text-xs uppercase text-muted">{section === "target-list" ? "Campaign recipients" : "Unsubscribed recipients"}</p>
+              <p className="mt-2 text-lg font-semibold text-foreground">
+                {section === "target-list" ? `${recipientsView.length} contacts` : `${unsubscribedView.length} unsubscribed`}
+              </p>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead className="text-xs uppercase text-muted">
                     <tr className="border-b border-border">
-                      <th className="px-2 py-3 text-left">Contact</th>
-                      <th className="px-2 py-3 text-left">Name</th>
-                      {section === "opted-out-list" ? <th className="px-2 py-3 text-left">Reason</th> : null}
+                      <th className="px-2 py-3 text-left">Email</th>
+                      <th className="px-2 py-3 text-left">Source</th>
+                      <th className="px-2 py-3 text-left">Subscribed</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {loadingListContacts ? (
-                      <tr><td className="px-2 py-4 text-muted" colSpan={section === "opted-out-list" ? 3 : 2}>Loading list contacts...</td></tr>
-                    ) : listContacts.length ? (
-                      listContacts.map((item) => (
-                        <tr key={item.contact_id} className="border-b border-border/60">
-                          <td className="px-2 py-3 text-foreground">{item.contacts.email}</td>
-                          <td className="px-2 py-3 text-muted">
-                            {[item.contacts.first_name, item.contacts.last_name].filter(Boolean).join(" ") || "—"}
-                          </td>
-                          {section === "opted-out-list" ? <td className="px-2 py-3 text-muted">Suppressed</td> : null}
+                    {(section === "target-list" ? recipientsView : unsubscribedView).length ? (
+                      (section === "target-list" ? recipientsView : unsubscribedView).map((item) => (
+                        <tr key={item.id} className="border-b border-border/60">
+                          <td className="px-2 py-3 text-foreground">{item.email}</td>
+                          <td className="px-2 py-3 text-muted capitalize">{item.source_type}</td>
+                          <td className="px-2 py-3 text-muted">{item.is_subscribed ? "Yes" : "No"}</td>
                         </tr>
                       ))
                     ) : (
-                      <tr><td className="px-2 py-4 text-muted" colSpan={section === "opted-out-list" ? 3 : 2}>No contacts in this list yet.</td></tr>
+                      <tr><td className="px-2 py-4 text-muted" colSpan={3}>No contacts found.</td></tr>
                     )}
                   </tbody>
                 </table>
               </div>
             </div>
-          ) : null}
+          )}
 
           {section === "mail-history" ? (
             <div className="mt-6 overflow-x-auto">
@@ -269,7 +278,7 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
                 <div className="flex items-center justify-between rounded-xl bg-surface-muted px-4 py-3"><span>Failed</span><strong className="text-foreground">{analytics.failed}</strong></div>
               </div>
 
-              <div className="grid gap-3 text-sm text-muted lg:grid-cols-3">
+              <div className="grid gap-3 text-sm text-muted lg:grid-cols-4">
                 <div className="rounded-xl bg-surface-muted px-4 py-4">
                   <p className="text-xs uppercase text-muted">Delivery rate</p>
                   <p className="mt-2 text-2xl font-bold text-foreground">{analytics.deliveryRate}%</p>
@@ -279,18 +288,16 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
                   <p className="mt-2 text-2xl font-bold text-foreground">{analytics.failureRate}%</p>
                 </div>
                 <div className="rounded-xl bg-surface-muted px-4 py-4">
-                  <p className="text-xs uppercase text-muted">Latest activity</p>
-                  <p className="mt-2 text-sm font-semibold text-foreground">
-                    {analytics.latestActivity ? new Date(analytics.latestActivity).toLocaleString() : "No activity yet"}
-                  </p>
+                  <p className="text-xs uppercase text-muted">Subscribed recipients</p>
+                  <p className="mt-2 text-2xl font-bold text-foreground">{analytics.subscribedRecipients}</p>
+                </div>
+                <div className="rounded-xl bg-surface-muted px-4 py-4">
+                  <p className="text-xs uppercase text-muted">Unsubscribed recipients</p>
+                  <p className="mt-2 text-2xl font-bold text-foreground">{analytics.unsubscribedRecipients}</p>
                 </div>
               </div>
 
-              <div className="grid gap-3 text-sm text-muted lg:grid-cols-3">
-                <div className="rounded-xl bg-surface-muted px-4 py-4">
-                  <p className="text-xs uppercase text-muted">Suppressed</p>
-                  <p className="mt-2 text-2xl font-bold text-foreground">{analytics.suppressedCount}</p>
-                </div>
+              <div className="grid gap-3 text-sm text-muted lg:grid-cols-2">
                 <div className="rounded-xl bg-surface-muted px-4 py-4">
                   <p className="text-xs uppercase text-muted">Bounces</p>
                   <p className="mt-2 text-2xl font-bold text-foreground">{analytics.bounceCount}</p>
@@ -300,27 +307,6 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
                   <p className="mt-2 text-2xl font-bold text-foreground">{analytics.complaintCount}</p>
                 </div>
               </div>
-
-              <div className="rounded-2xl border border-border bg-surface-muted px-5 py-5">
-                <h3 className="font-display text-xl text-foreground">Recent activity by day</h3>
-                <p className="mt-1 text-sm text-muted">Last recorded sends grouped by day.</p>
-                <div className="mt-4 flex flex-col gap-2">
-                  {analytics.recentDays.length ? analytics.recentDays.map(([day, count]) => (
-                    <div key={day} className="flex items-center gap-3">
-                      <span className="w-32 shrink-0 text-xs text-muted">{day}</span>
-                      <div className="h-2 flex-1 rounded-full bg-surface">
-                        <div
-                          className="h-2 rounded-full bg-accent-dark"
-                          style={{ width: `${Math.max(8, Math.min(100, count * 18))}%` }}
-                        />
-                      </div>
-                      <span className="w-10 shrink-0 text-right text-xs font-semibold text-foreground">{count}</span>
-                    </div>
-                  )) : (
-                    <p className="text-sm text-muted">No activity to chart yet.</p>
-                  )}
-                </div>
-              </div>
             </div>
           ) : null}
 
@@ -328,11 +314,18 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
             <Link href="/sends" className="rounded-full border border-border px-4 py-2 text-xs font-semibold text-foreground transition hover:bg-surface-muted">
               Back to sends
             </Link>
+            <button
+              type="button"
+              onClick={() => void handleDeleteCampaign()}
+              className="rounded-full border border-red-200 px-4 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
+            >
+              Delete campaign
+            </button>
             <Link href={`/sends/campaigns/${campaign.id}/target-list`} className="rounded-full border border-border px-4 py-2 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark">
-              View target list
+              View recipients
             </Link>
             <Link href={`/sends/campaigns/${campaign.id}/opted-out-list`} className="rounded-full border border-border px-4 py-2 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark">
-              View opted out list
+              View unsubscribed
             </Link>
             <Link href={`/sends/campaigns/${campaign.id}/mail-history`} className="rounded-full border border-border px-4 py-2 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark">
               View mail history
