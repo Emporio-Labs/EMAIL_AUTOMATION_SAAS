@@ -99,7 +99,7 @@ export default function ListsPage() {
             <button
               id="create-list-btn"
               onClick={openCreate}
-              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:bg-[#2a2a2a] active:scale-95"
+              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:opacity-80 active:scale-95"
             >
               + Create list
             </button>
@@ -193,7 +193,7 @@ export default function ListsPage() {
               {createError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">{createError}</p>}
               <div className="flex gap-3 mt-2">
                 <button type="button" onClick={() => setShowCreateModal(false)} className="flex-1 h-11 rounded-full border border-border text-sm font-semibold text-muted transition hover:bg-surface-muted">Cancel</button>
-                <button id="create-list-submit" type="submit" disabled={creating} className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60">
+                <button id="create-list-submit" type="submit" disabled={creating} className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60">
                   {creating ? "Creating..." : "Create list"}
                 </button>
               </div>

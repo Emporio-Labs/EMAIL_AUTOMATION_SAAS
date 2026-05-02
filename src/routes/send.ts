@@ -18,6 +18,7 @@ const sendSchema = z.object({
   toEmails: z.array(z.string().email()).optional(),
   contactIds: z.array(z.string().uuid()).optional(),
   listIds: z.array(z.string().uuid()).optional(),
+  campaignId: z.string().uuid().optional(),
   emailType: z.enum(['transactional', 'marketing']).default('marketing'),
 }).refine(
   (val) => (val.toEmails?.length ?? 0) + (val.contactIds?.length ?? 0) + (val.listIds?.length ?? 0) > 0,
@@ -56,6 +57,20 @@ sendRouter.post('/', async (request, response) => {
   const isSandbox = request.keyType === 'sandbox';
   const fromEmail = normalizeEmail(parsed.data.from);
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
+
+  if (parsed.data.campaignId) {
+    const { data: campaignRow, error: campaignError } = await supabaseAdmin
+      .from('campaigns')
+      .select('id')
+      .eq('id', parsed.data.campaignId)
+      .eq('tenant_id', tenantId as string)
+      .maybeSingle();
+
+    if ((campaignError || !campaignRow) && !env.AUTH_BYPASS) {
+      response.status(404).json({ error: 'Campaign not found for this tenant' });
+      return;
+    }
+  }
 
   const [contactRowsResult, listRowsResult] = await Promise.all([
     parsed.data.contactIds && parsed.data.contactIds.length > 0
@@ -214,6 +229,7 @@ sendRouter.post('/', async (request, response) => {
   const sentAt = isSandbox ? new Date().toISOString() : null;
   const jobRows = sendableRecipients.map((email) => ({
     tenant_id: tenantId as string,
+    campaign_id: parsed.data.campaignId ?? null,
     from_email: fromEmail,
     to_email: email,
     subject: parsed.data.subject,

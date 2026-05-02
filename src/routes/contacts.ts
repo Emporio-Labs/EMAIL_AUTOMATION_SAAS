@@ -11,8 +11,9 @@ export const contactsRouter = Router();
 
 const contactSchema = z.object({
   email: z.string().trim().email(),
-  firstName: z.string().trim().max(120).optional(),
-  lastName: z.string().trim().max(120).optional(),
+  // Treat empty strings as missing — transform empty -> undefined then optional
+  firstName: z.string().trim().max(120).transform((s) => (s === "" ? undefined : s)).optional(),
+  lastName: z.string().trim().max(120).transform((s) => (s === "" ? undefined : s)).optional(),
 });
 
 const importSchema = z.object({
@@ -60,8 +61,8 @@ contactsRouter.post('/', async (request, response) => {
       {
         tenant_id: tenantId as string,
         email,
-        first_name: parsed.data.firstName ?? null,
-        last_name: parsed.data.lastName ?? null,
+        first_name: parsed.data.firstName && parsed.data.firstName.trim() ? parsed.data.firstName.trim() : null,
+        last_name: parsed.data.lastName && parsed.data.lastName.trim() ? parsed.data.lastName.trim() : null,
         updated_at: new Date().toISOString(),
       },
       {
@@ -105,8 +106,8 @@ contactsRouter.post('/import', async (request, response) => {
   const rows = parsed.data.contacts.map((contact) => ({
     tenant_id: tenantId as string,
     email: normalizeEmail(contact.email),
-    first_name: contact.firstName ?? null,
-    last_name: contact.lastName ?? null,
+    first_name: contact.firstName && contact.firstName.trim() ? contact.firstName.trim() : null,
+    last_name: contact.lastName && contact.lastName.trim() ? contact.lastName.trim() : null,
     updated_at: new Date().toISOString(),
   }));
 

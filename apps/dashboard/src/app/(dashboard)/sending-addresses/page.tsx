@@ -144,7 +144,7 @@ export default function SendingAddressesPage() {
             <button
               id="add-sending-address-btn"
               onClick={openCreate}
-              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:bg-[#2a2a2a] active:scale-95"
+              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:opacity-80 active:scale-95"
             >
               + Add address
             </button>
@@ -276,7 +276,7 @@ export default function SendingAddressesPage() {
                   id="add-sending-address-submit"
                   type="submit"
                   disabled={creating}
-                  className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+                  className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60"
                 >
                   {creating ? "Adding..." : "Add address"}
                 </button>

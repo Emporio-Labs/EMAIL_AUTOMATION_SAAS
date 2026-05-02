@@ -135,7 +135,7 @@ export default function ApiKeysPage() {
                 id="create-api-key-btn"
                 onClick={openCreate}
                 disabled={limitReached}
-                className="h-10 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+                className="h-10 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60"
               >
                 + Create key
               </button>
@@ -289,7 +289,7 @@ export default function ApiKeysPage() {
                 </div>
                 <button
                   onClick={closeCreate}
-                  className="h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a]"
+                  className="h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80"
                 >
                   Done
                 </button>
@@ -359,7 +359,7 @@ export default function ApiKeysPage() {
                     id="create-api-key-submit"
                     type="submit"
                     disabled={creating || limitReached}
-                    className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+                    className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60"
                   >
                     {creating ? "Creating..." : "Create key"}
                   </button>

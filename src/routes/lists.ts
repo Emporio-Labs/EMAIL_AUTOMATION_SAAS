@@ -28,7 +28,7 @@ listsRouter.get('/', async (request, response) => {
 
   const { data, error } = await supabaseAdmin
     .from('lists')
-    .select('id, name, description, created_at, updated_at')
+    .select('id, name, description, type, created_at, updated_at')
     .eq('tenant_id', tenantId as string)
     .order('created_at', { ascending: false });
 
@@ -62,7 +62,7 @@ listsRouter.post('/', async (request, response) => {
       name: parsed.data.name,
       description: parsed.data.description ?? null,
     })
-    .select('id, name, description, created_at, updated_at')
+    .select('id, name, description, type, created_at, updated_at')
     .single();
 
   if (error || !data) {
@@ -104,7 +104,7 @@ listsRouter.patch('/:listId', async (request, response) => {
     })
     .eq('tenant_id', tenantId as string)
     .eq('id', request.params.listId)
-    .select('id, name, description, created_at, updated_at')
+    .select('id, name, description, type, created_at, updated_at')
     .maybeSingle();
 
   if (error) {

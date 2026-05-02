@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
@@ -23,7 +24,22 @@ type SendItem = {
 
 type SendsResponse = { page: number; limit: number; total: number; items: SendItem[] };
 
-type ListItem = { id: string; name: string; description: string | null };
+type CampaignItem = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  description: string | null;
+  status: "draft" | "scheduled" | "running" | "paused" | "completed";
+  target_list_id: string | null;
+  opted_out_list_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+type CampaignsResponse = { campaigns: CampaignItem[] };
+type CreateCampaignResponse = { campaign: CampaignItem };
+
+type ListItem = { id: string; name: string; description: string | null; type: string };
 type Contact = { id: string; email: string; first_name: string | null; last_name: string | null };
 type ListContact = { contact_id: string; contacts: Contact };
 
@@ -41,18 +57,34 @@ type SendingAddressesResponse = { addresses: SendingAddress[] };
 
 let toastCounter = 0;
 type RecipientTab = "lists" | "contacts" | "manual";
+type SendsView = "transactional" | "marketing";
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 
 export default function SendsPage() {
   const { token } = useAuth();
+  const router = useRouter();
   const [items, setItems] = useState<SendItem[]>([]);
+  const [campaigns, setCampaigns] = useState<CampaignItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ subject: "", html: "", emailType: "marketing" as "transactional" | "marketing" });
+  const [campaignError, setCampaignError] = useState<string | null>(null);
+  const [form, setForm] = useState({ subject: "", html: "" });
+  const [emailType, setEmailType] = useState<"transactional" | "marketing">("transactional");
   const [sending, setSending] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [emailTypeFilter, setEmailTypeFilter] = useState<"all" | "transactional" | "marketing">("all");
+  const [activeView, setActiveView] = useState<SendsView>("transactional");
+  const [showCampaignModal, setShowCampaignModal] = useState(false);
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
+  const [campaignForm, setCampaignForm] = useState({
+    name: "",
+    description: "",
+    targetListId: "",
+    optedOutListId: "",
+  });
+  const [campaignFormError, setCampaignFormError] = useState<string | null>(null);
 
   const [fromAddress, setFromAddress] = useState("");
   const [sendingAddresses, setSendingAddresses] = useState<SendingAddress[]>([]);
@@ -60,6 +92,7 @@ export default function SendsPage() {
 
   // Recipients state — single shared Set
   const [recipientEmails, setRecipientEmails] = useState<Set<string>>(new Set());
+  const [marketingRecipientEmails, setMarketingRecipientEmails] = useState<Set<string>>(new Set());
   const [recipientTab, setRecipientTab] = useState<RecipientTab>("manual");
 
   // Data for lists / contacts tabs
@@ -71,6 +104,11 @@ export default function SendsPage() {
   // Lists tab state
   const [selectedListId, setSelectedListId] = useState("");
   const [loadingListContacts, setLoadingListContacts] = useState(false);
+
+  // Marketing target list state
+  const [marketingCampaignId, setMarketingCampaignId] = useState("");
+  const [marketingTargetListId, setMarketingTargetListId] = useState("");
+  const [loadingMarketingRecipients, setLoadingMarketingRecipients] = useState(false);
 
   // Contacts tab state
   const [contactSearch, setContactSearch] = useState("");
@@ -100,6 +138,25 @@ export default function SendsPage() {
 
   function clearAll() { setRecipientEmails(new Set()); }
 
+  async function loadMarketingRecipients(listId: string) {
+    if (!token || !listId) {
+      setMarketingRecipientEmails(new Set());
+      return;
+    }
+
+    setLoadingMarketingRecipients(true);
+    try {
+      const res = await apiFetch<{ contacts: ListContact[] }>(`/v1/lists/${listId}/contacts`, token);
+      const emails = res.contacts.map((contact) => contact.contacts.email);
+      setMarketingRecipientEmails(new Set(emails));
+    } catch {
+      setMarketingRecipientEmails(new Set());
+      addToast("error", "Failed to load target list contacts.");
+    } finally {
+      setLoadingMarketingRecipients(false);
+    }
+  }
+
   // Load sends list
   function loadSends() {
     if (!token) return;
@@ -110,7 +167,36 @@ export default function SendsPage() {
       .finally(() => setLoading(false));
   }
 
+  function loadCampaigns() {
+    if (!token) return;
+    setLoadingCampaigns(true);
+    apiFetch<CampaignsResponse>("/v1/campaigns", token)
+      .then((res) => { setCampaigns(res.campaigns); setCampaignError(null); })
+      .catch((err) => setCampaignError(err?.message ?? "Failed to load campaigns"))
+      .finally(() => setLoadingCampaigns(false));
+  }
+
+  function loadLists() {
+    if (!token) return;
+    setLoadingLists(true);
+    apiFetch<{ lists: ListItem[] }>("/v1/lists", token)
+      .then((res) => setLists(res.lists))
+      .catch(() => {})
+      .finally(() => setLoadingLists(false));
+  }
+
   useEffect(() => { loadSends(); }, [token]);
+
+  useEffect(() => {
+    // Load campaigns when marketing view is active.
+    if (activeView !== "marketing") return;
+    loadCampaigns();
+  }, [activeView, emailType, token]);
+
+  // Keep emailType in sync with the active view: transactional view forces transactional.
+  useEffect(() => {
+    setEmailType(activeView === "marketing" ? "marketing" : "transactional");
+  }, [activeView]);
 
   useEffect(() => {
     if (!token) return;
@@ -121,15 +207,39 @@ export default function SendsPage() {
       .finally(() => setLoadingAddresses(false));
   }, [token]);
 
-  // Load lists when "lists" tab is first opened
+  // Load lists when the recipient tab or campaign modal needs them
   useEffect(() => {
-    if (recipientTab !== "lists" || !token || lists.length > 0) return;
-    setLoadingLists(true);
-    apiFetch<{ lists: ListItem[] }>("/v1/lists", token)
-      .then((res) => setLists(res.lists))
-      .catch(() => {})
-      .finally(() => setLoadingLists(false));
-  }, [recipientTab, token]);
+    if (!token) return;
+    if (recipientTab !== "lists" && !showCampaignModal && emailType !== "marketing") return;
+    loadLists();
+  }, [recipientTab, showCampaignModal, emailType, token]);
+
+  useEffect(() => {
+    if (emailType !== "marketing" || campaigns.length === 0) return;
+    if (!marketingCampaignId || !campaigns.some((campaign) => campaign.id === marketingCampaignId)) {
+      const preferredCampaign = campaigns.find((campaign) => campaign.target_list_id) ?? campaigns[0];
+      setMarketingCampaignId(preferredCampaign.id);
+    }
+  }, [emailType, campaigns, marketingCampaignId]);
+
+  useEffect(() => {
+    if (emailType !== "marketing" || lists.length === 0) return;
+    const selectedCampaign = campaigns.find((campaign) => campaign.id === marketingCampaignId);
+    if (selectedCampaign?.target_list_id) {
+      if (selectedCampaign.target_list_id !== marketingTargetListId) {
+        setMarketingTargetListId(selectedCampaign.target_list_id);
+      }
+      return;
+    }
+    if (!marketingTargetListId || !lists.some((list) => list.id === marketingTargetListId)) {
+      setMarketingTargetListId(lists[0].id);
+    }
+  }, [emailType, lists, campaigns, marketingCampaignId, marketingTargetListId]);
+
+  useEffect(() => {
+    if (emailType !== "marketing") return;
+    void loadMarketingRecipients(marketingTargetListId);
+  }, [emailType, marketingTargetListId, token]);
 
   // Load contacts when "contacts" tab is first opened
   useEffect(() => {
@@ -222,10 +332,57 @@ export default function SendsPage() {
       : items.filter((item) => item.email_type === emailTypeFilter),
     [items, emailTypeFilter]);
 
+  const listNameById = useMemo(() => {
+    return new Map(lists.map((list) => [list.id, list.name]));
+  }, [lists]);
+
+  const isMarketing = activeView === "marketing";
+
+  async function handleCreateCampaign(event: React.FormEvent) {
+    event.preventDefault();
+    if (!token) return;
+
+    setCreatingCampaign(true);
+    setCampaignFormError(null);
+
+    try {
+      const response = await apiFetch<CreateCampaignResponse>("/v1/campaigns", token, {
+        method: "POST",
+        body: JSON.stringify({
+          name: campaignForm.name,
+          description: campaignForm.description || undefined,
+          targetListId: campaignForm.targetListId || undefined,
+          optedOutListId: campaignForm.optedOutListId || undefined,
+        }),
+      });
+
+      setCampaigns((prev) => [response.campaign, ...prev]);
+      setShowCampaignModal(false);
+      setCampaignForm({ name: "", description: "", targetListId: "", optedOutListId: "" });
+      router.push(`/sends/campaigns/${response.campaign.id}`);
+    } catch (err: any) {
+      setCampaignFormError(err?.message ?? "Failed to create campaign");
+    } finally {
+      setCreatingCampaign(false);
+    }
+  }
+
   // Send emails
   async function handleSend(event: React.FormEvent) {
     event.preventDefault();
-    const toEmails = Array.from(recipientEmails);
+    const toEmails = emailType === "marketing" ? Array.from(marketingRecipientEmails) : Array.from(recipientEmails);
+    const selectedCampaign = campaigns.find((campaign) => campaign.id === marketingCampaignId);
+
+    if (emailType === "marketing" && !marketingCampaignId) {
+      addToast("error", "Select a campaign before sending marketing emails.");
+      return;
+    }
+
+    if (emailType === "marketing" && !selectedCampaign?.target_list_id) {
+      addToast("error", "Selected campaign has no target list. Update campaign first.");
+      return;
+    }
+
     if (!fromAddress) {
       addToast("error", "Select a From address before sending.");
       return;
@@ -236,12 +393,21 @@ export default function SendsPage() {
     }
     setSending(true);
     try {
+      const recipients = emailType === "marketing" ? Array.from(marketingRecipientEmails) : toEmails;
       const result = await apiFetch<{ accepted: number }>("/v1/send", token, {
         method: "POST",
-        body: JSON.stringify({ subject: form.subject, html: form.html, from: fromAddress, toEmails, emailType: form.emailType }),
+        body: JSON.stringify({
+          subject: form.subject,
+          html: form.html,
+          from: fromAddress,
+          toEmails: recipients,
+          campaignId: emailType === "marketing" ? marketingCampaignId : undefined,
+          emailType,
+        }),
       });
       addToast("success", `✅ ${result.accepted} email${result.accepted !== 1 ? "s" : ""} queued successfully!`);
-      setForm({ subject: "", html: "", emailType: "marketing" });
+      setForm({ subject: "", html: "" });
+      setEmailType("marketing");
       setRecipientEmails(new Set());
       setTimeout(loadSends, 1500);
     } catch (err: any) {
@@ -258,6 +424,25 @@ export default function SendsPage() {
     <div className="min-h-screen flex flex-col">
       <Topbar title="Sends" subtitle="Trigger new sends and monitor delivery status." />
       <main className="flex flex-col gap-8 px-6 py-8">
+        <div className="flex gap-2 rounded-full border border-border bg-surface-muted p-1 w-fit fade-in">
+          <button
+            type="button"
+            onClick={() => setActiveView("transactional")}
+            className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${activeView === "transactional" ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
+          >
+            Transactional
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveView("marketing")}
+            className={`px-4 py-1.5 rounded-full text-xs font-semibold transition ${activeView === "marketing" ? "bg-foreground text-background" : "text-muted hover:text-foreground"}`}
+          >
+            Marketing
+          </button>
+        </div>
+
+        {activeView === "transactional" ? (
+          <>
         <section className="grid gap-6 lg:grid-cols-[1.2fr_1fr] fade-in">
 
           {/* ── Compose form ─────────────────────────────────── */}
@@ -310,152 +495,198 @@ export default function SendsPage() {
                 />
               </label>
 
-              {/* ── Email Type ──────────────────────────────── */}
-              <label className="flex flex-col gap-2 text-sm text-muted">
-                Email type *
-                <select
-                  id="send-email-type-select"
-                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
-                  value={form.emailType}
-                  onChange={(e) => setForm({ ...form, emailType: e.target.value as "transactional" | "marketing" })}
-                  required
-                >
-                  <option value="marketing">Marketing</option>
-                  <option value="transactional">Transactional</option>
-                </select>
-                <span className="text-xs text-muted">
-                  {form.emailType === "transactional" ? "Transactional: OTPs, order updates, etc." : "Marketing: Promotions, newsletters, campaigns"}
-                </span>
-              </label>
+              {/* ── Email Type (only editable in Marketing view) ─────────────────────────────── */}
+              {isMarketing && (
+                <label className="flex flex-col gap-2 text-sm text-muted">
+                  Email type *
+                  <select
+                    id="send-email-type-select"
+                    className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                    value={emailType}
+                    onChange={(e) => setEmailType(e.target.value as "transactional" | "marketing")}
+                    required
+                  >
+                    <option value="marketing">Marketing</option>
+                    <option value="transactional">Transactional</option>
+                  </select>
+                  <span className="text-xs text-muted">
+                    {emailType === "transactional" ? "Transactional: OTPs, order updates, etc." : "Marketing: Promotions, newsletters, campaigns"}
+                  </span>
+                </label>
+              )}
 
               {/* ── Recipients picker ───────────────────────── */}
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted">Recipients *</span>
-                  {recipientEmails.size > 0 && (
+                  <span className="text-sm text-muted">{emailType === "marketing" ? "Target list *" : "Recipients *"}</span>
+                  {emailType === "transactional" && recipientEmails.size > 0 && (
                     <button type="button" onClick={clearAll} className="text-xs text-muted hover:text-red-500 transition">
                       Clear all ({recipientEmails.size})
                     </button>
                   )}
                 </div>
 
-                {/* Tab switcher */}
-                <div className="flex gap-1 rounded-full border border-border bg-surface-muted p-1 w-fit">
-                  <button type="button" className={tabClasses(recipientTab === "lists")} onClick={() => setRecipientTab("lists")}>From lists</button>
-                  <button type="button" className={tabClasses(recipientTab === "contacts")} onClick={() => setRecipientTab("contacts")}>From contacts</button>
-                  <button type="button" className={tabClasses(recipientTab === "manual")} onClick={() => setRecipientTab("manual")}>Manual</button>
-                </div>
-
-                {/* Lists tab */}
-                {recipientTab === "lists" && (
+                {emailType === "marketing" ? (
                   <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
-                    {loadingLists ? (
+                      {loadingLists || loadingCampaigns ? (
                       <p className="text-xs text-muted">Loading lists...</p>
-                    ) : lists.length === 0 ? (
+                      ) : campaigns.length === 0 ? (
+                        <p className="text-xs text-muted">No campaigns found. Create a campaign first.</p>
+                      ) : lists.length === 0 ? (
                       <p className="text-xs text-muted">No lists found. Create a list first.</p>
                     ) : (
                       <>
+                          <select
+                            id="marketing-campaign-select"
+                            className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent"
+                            value={marketingCampaignId}
+                            onChange={(e) => setMarketingCampaignId(e.target.value)}
+                          >
+                            {campaigns.map((campaign) => (
+                              <option key={campaign.id} value={campaign.id}>{campaign.name}</option>
+                            ))}
+                          </select>
                         <select
-                          id="send-list-select"
+                          id="marketing-target-list-select"
                           className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent"
-                          value={selectedListId}
-                          onChange={(e) => setSelectedListId(e.target.value)}
+                          value={marketingTargetListId}
+                          onChange={(e) => setMarketingTargetListId(e.target.value)}
+                            disabled={Boolean(campaigns.find((campaign) => campaign.id === marketingCampaignId)?.target_list_id)}
                         >
-                          <option value="">— Select a list —</option>
-                          {lists.map((l) => (
-                            <option key={l.id} value={l.id}>{l.name}</option>
+                          {lists.filter((list) => list.type === 'marketing').map((list) => (
+                            <option key={list.id} value={list.id}>{list.name}</option>
                           ))}
                         </select>
-                        <button
-                          type="button"
-                          id="add-from-list-btn"
-                          onClick={handleAddFromList}
-                          disabled={!selectedListId || loadingListContacts}
-                          className="h-9 rounded-full bg-foreground text-xs font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-50"
-                        >
-                          {loadingListContacts ? "Loading..." : "Add all contacts from this list"}
-                        </button>
+                          <p className="text-xs text-muted">
+                            Campaign: {campaigns.find((campaign) => campaign.id === marketingCampaignId)?.name ?? "Not selected"}
+                          </p>
+                        <p className="text-xs text-muted">
+                          {loadingMarketingRecipients
+                            ? "Loading target list contacts..."
+                            : `${marketingRecipientEmails.size} recipient${marketingRecipientEmails.size === 1 ? "" : "s"} ready to send.`}
+                        </p>
                       </>
                     )}
                   </div>
-                )}
+                ) : (
+                  <>
+                    {/* Tab switcher */}
+                    <div className="flex gap-1 rounded-full border border-border bg-surface-muted p-1 w-fit">
+                      <button type="button" className={tabClasses(recipientTab === "lists")} onClick={() => setRecipientTab("lists")}>From lists</button>
+                      <button type="button" className={tabClasses(recipientTab === "contacts")} onClick={() => setRecipientTab("contacts")}>From contacts</button>
+                      <button type="button" className={tabClasses(recipientTab === "manual")} onClick={() => setRecipientTab("manual")}>Manual</button>
+                    </div>
 
-                {/* Contacts tab */}
-                {recipientTab === "contacts" && (
-                  <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
-                    {loadingContacts ? (
-                      <p className="text-xs text-muted">Loading contacts...</p>
-                    ) : contacts.length === 0 ? (
-                      <p className="text-xs text-muted">No contacts found. Add contacts first.</p>
-                    ) : (
-                      <>
-                        <input
-                          className="h-9 rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent"
-                          placeholder="Search contacts..."
-                          value={contactSearch}
-                          onChange={(e) => setContactSearch(e.target.value)}
-                        />
-                        <div className="max-h-44 overflow-y-auto flex flex-col gap-1">
-                          {filteredContacts.length === 0 ? (
-                            <p className="text-xs text-muted py-2">No matches.</p>
-                          ) : filteredContacts.map((c) => (
-                            <label
-                              key={c.id}
-                              className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition ${selectedContactIds.has(c.id) ? "bg-accent-soft/60" : "hover:bg-surface"}`}
+                    {/* Lists tab */}
+                    {recipientTab === "lists" && (
+                      <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
+                        {loadingLists ? (
+                          <p className="text-xs text-muted">Loading lists...</p>
+                        ) : lists.length === 0 ? (
+                          <p className="text-xs text-muted">No lists found. Create a list first.</p>
+                        ) : (
+                          <>
+                            <select
+                              id="send-list-select"
+                              className="h-10 rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent"
+                              value={selectedListId}
+                              onChange={(e) => setSelectedListId(e.target.value)}
                             >
-                              <input
-                                type="checkbox"
-                                checked={selectedContactIds.has(c.id)}
-                                onChange={() => toggleContact(c.id)}
-                                className="accent-foreground"
-                              />
-                              <span className="text-xs text-foreground truncate">{c.email}</span>
-                              {(c.first_name || c.last_name) && (
-                                <span className="text-xs text-muted ml-auto shrink-0">
-                                  {[c.first_name, c.last_name].filter(Boolean).join(" ")}
-                                </span>
-                              )}
-                            </label>
-                          ))}
-                        </div>
+                              <option value="">— Select a list —</option>
+                              {lists.filter((l) => l.type !== 'marketing').map((l) => (
+                                <option key={l.id} value={l.id}>{l.name}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              id="add-from-list-btn"
+                              onClick={handleAddFromList}
+                              disabled={!selectedListId || loadingListContacts}
+                              className="h-9 rounded-full bg-foreground text-xs font-semibold text-background transition hover:opacity-80 disabled:opacity-50"
+                            >
+                              {loadingListContacts ? "Loading..." : "Add all contacts from this list"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Contacts tab */}
+                    {recipientTab === "contacts" && (
+                      <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
+                        {loadingContacts ? (
+                          <p className="text-xs text-muted">Loading contacts...</p>
+                        ) : contacts.length === 0 ? (
+                          <p className="text-xs text-muted">No contacts found. Add contacts first.</p>
+                        ) : (
+                          <>
+                            <input
+                              className="h-9 rounded-xl border border-border bg-surface px-3 text-sm text-foreground outline-none focus:border-accent"
+                              placeholder="Search contacts..."
+                              value={contactSearch}
+                              onChange={(e) => setContactSearch(e.target.value)}
+                            />
+                            <div className="max-h-44 overflow-y-auto flex flex-col gap-1">
+                              {filteredContacts.length === 0 ? (
+                                <p className="text-xs text-muted py-2">No matches.</p>
+                              ) : filteredContacts.map((c) => (
+                                <label
+                                  key={c.id}
+                                  className={`flex items-center gap-2 rounded-lg px-3 py-2 cursor-pointer transition ${selectedContactIds.has(c.id) ? "bg-accent-soft/60" : "hover:bg-surface"}`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedContactIds.has(c.id)}
+                                    onChange={() => toggleContact(c.id)}
+                                    className="accent-foreground"
+                                  />
+                                  <span className="text-xs text-foreground truncate">{c.email}</span>
+                                  {(c.first_name || c.last_name) && (
+                                    <span className="text-xs text-muted ml-auto shrink-0">
+                                      {[c.first_name, c.last_name].filter(Boolean).join(" ")}
+                                    </span>
+                                  )}
+                                </label>
+                              ))}
+                            </div>
+                            <button
+                              type="button"
+                              id="add-selected-contacts-btn"
+                              onClick={handleAddSelectedContacts}
+                              disabled={selectedContactIds.size === 0}
+                              className="h-9 rounded-full bg-foreground text-xs font-semibold text-background transition hover:opacity-80 disabled:opacity-50"
+                            >
+                              Add {selectedContactIds.size > 0 ? `${selectedContactIds.size} selected` : "selected contacts"}
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Manual tab */}
+                    {recipientTab === "manual" && (
+                      <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
+                        <textarea
+                          id="send-manual-emails-input"
+                          className="min-h-[72px] rounded-xl border border-border bg-surface px-4 py-3 text-sm text-foreground outline-none focus:border-accent resize-none"
+                          placeholder="Paste comma-separated emails:&#10;john@example.com, jane@example.com, ..."
+                          value={manualInput}
+                          onChange={(e) => setManualInput(e.target.value)}
+                        />
                         <button
                           type="button"
-                          id="add-selected-contacts-btn"
-                          onClick={handleAddSelectedContacts}
-                          disabled={selectedContactIds.size === 0}
-                          className="h-9 rounded-full bg-foreground text-xs font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-50"
+                          id="add-manual-emails-btn"
+                          onClick={handleAddManual}
+                          disabled={!manualInput.trim()}
+                          className="h-9 rounded-full bg-foreground text-xs font-semibold text-background transition hover:opacity-80 disabled:opacity-50"
                         >
-                          Add {selectedContactIds.size > 0 ? `${selectedContactIds.size} selected` : "selected contacts"}
+                          Add emails
                         </button>
-                      </>
+                      </div>
                     )}
-                  </div>
-                )}
 
-                {/* Manual tab */}
-                {recipientTab === "manual" && (
-                  <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
-                    <textarea
-                      id="send-manual-emails-input"
-                      className="min-h-[72px] rounded-xl border border-border bg-surface px-4 py-3 text-sm text-foreground outline-none focus:border-accent resize-none"
-                      placeholder="Paste comma-separated emails:&#10;john@example.com, jane@example.com, ..."
-                      value={manualInput}
-                      onChange={(e) => setManualInput(e.target.value)}
-                    />
-                    <button
-                      type="button"
-                      id="add-manual-emails-btn"
-                      onClick={handleAddManual}
-                      disabled={!manualInput.trim()}
-                      className="h-9 rounded-full bg-foreground text-xs font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-50"
-                    >
-                      Add emails
-                    </button>
-                  </div>
-                )}
-
-                {/* Recipients tags */}
-                {recipientEmails.size > 0 && (
+                    {/* Recipients tags */}
+                    {recipientEmails.size > 0 && (
                   <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-surface-muted/60 px-3 py-2 max-h-28 overflow-y-auto">
                     {Array.from(recipientEmails).map((email) => (
                       <span
@@ -475,6 +706,8 @@ export default function SendsPage() {
                     ))}
                   </div>
                 )}
+                  </>
+                )}
               </div>
 
               {/* ── HTML body ──────────────────────────────── */}
@@ -493,13 +726,13 @@ export default function SendsPage() {
               <button
                 id="send-emails-btn"
                 type="submit"
-                disabled={sending || recipientEmails.size === 0}
-                className="h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] active:scale-[0.98] disabled:opacity-60"
+                disabled={sending || (emailType === "marketing" ? marketingRecipientEmails.size === 0 : recipientEmails.size === 0)}
+                className="h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 active:scale-[0.98] disabled:opacity-60"
               >
                 {sending
                   ? "Sending..."
-                  : recipientEmails.size > 0
-                  ? `Send to ${recipientEmails.size} recipient${recipientEmails.size !== 1 ? "s" : ""}`
+                  : (emailType === "marketing" ? marketingRecipientEmails.size > 0 : recipientEmails.size > 0)
+                  ? `Send to ${emailType === "marketing" ? marketingRecipientEmails.size : recipientEmails.size} recipient${(emailType === "marketing" ? marketingRecipientEmails.size : recipientEmails.size) !== 1 ? "s" : ""}`
                   : "Send emails"}
               </button>
             </form>
@@ -641,7 +874,170 @@ export default function SendsPage() {
             </table>
           </div>
         </section>
+          </>
+        ) : (
+          <section className="rounded-3xl border border-border bg-surface px-6 py-6 card-shadow fade-in">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <h2 className="font-display text-2xl text-foreground">Campaigns</h2>
+                <p className="mt-1 text-sm text-muted">Manage recurring marketing campaigns and inspect performance.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCampaignModal(true)}
+                className="h-10 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:opacity-80 active:scale-95"
+              >
+                Add a campaign
+              </button>
+            </div>
+
+            <div className="mt-5 overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="text-xs uppercase text-muted">
+                  <tr className="border-b border-border">
+                    <th className="px-2 py-3 text-left">Campaign name</th>
+                    <th className="px-2 py-3 text-left">Description</th>
+                    <th className="px-2 py-3 text-left">Target list</th>
+                    <th className="px-2 py-3 text-left">Opted out list</th>
+                    <th className="px-2 py-3 text-left">Mail history</th>
+                    <th className="px-2 py-3 text-left">Analytics</th>
+                    <th className="px-2 py-3 text-left">Send</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loadingCampaigns ? (
+                    <tr><td className="px-2 py-4 text-muted" colSpan={7}>Loading campaigns...</td></tr>
+                  ) : campaignError ? (
+                    <tr><td className="px-2 py-4 text-red-600" colSpan={7}>{campaignError}</td></tr>
+                  ) : campaigns.length ? (
+                    campaigns.map((campaign) => (
+                      <tr key={campaign.id} className="border-b border-border/60">
+                        <td className="px-2 py-3 text-foreground font-medium">{campaign.name}</td>
+                        <td className="px-2 py-3 text-muted">{campaign.description ?? "—"}</td>
+                        <td className="px-2 py-3 text-muted">
+                          <div className="flex items-center gap-2">
+                            <span>{campaign.target_list_id ? (listNameById.get(campaign.target_list_id) ?? "Selected list") : "—"}</span>
+                            <Link href={`/sends/campaigns/${campaign.id}/target-list`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
+                              View
+                            </Link>
+                          </div>
+                        </td>
+                        <td className="px-2 py-3 text-muted">
+                          <div className="flex items-center gap-2">
+                            <span>{campaign.opted_out_list_id ? (listNameById.get(campaign.opted_out_list_id) ?? "Selected list") : "—"}</span>
+                            <Link href={`/sends/campaigns/${campaign.id}/opted-out-list`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
+                              View
+                            </Link>
+                          </div>
+                        </td>
+                        <td className="px-2 py-3 text-muted">
+                          <Link href={`/sends/campaigns/${campaign.id}/mail-history`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
+                            View
+                          </Link>
+                        </td>
+                        <td className="px-2 py-3 text-muted">
+                          <Link href={`/sends/campaigns/${campaign.id}/analytics`} className="h-7 rounded-full border border-border px-3 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark inline-flex items-center">
+                            View
+                          </Link>
+                        </td>
+                        <td className="px-2 py-3 text-muted">
+                          {campaign.target_list_id ? (
+                            <Link href={`/sends/campaigns/${campaign.id}`} className="h-7 rounded-full border border-foreground px-3 text-xs font-semibold text-foreground bg-foreground/10 transition hover:bg-foreground hover:text-background inline-flex items-center">
+                              Send
+                            </Link>
+                          ) : (
+                            <span className="text-xs text-muted">No list</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td className="px-2 py-8 text-center text-muted" colSpan={7}>
+                        No campaigns yet. Create one to start tracking marketing activity.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </main>
+
+      {showCampaignModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowCampaignModal(false); }}
+        >
+          <div className="w-full max-w-lg rounded-3xl border border-border bg-surface px-8 py-8 card-shadow fade-in">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="font-display text-2xl">Add a campaign</h2>
+              <button onClick={() => setShowCampaignModal(false)} className="flex h-8 w-8 items-center justify-center rounded-full text-muted hover:bg-surface-muted transition" aria-label="Close">×</button>
+            </div>
+
+            <form className="flex flex-col gap-4" onSubmit={handleCreateCampaign}>
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                Campaign name *
+                <input
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  value={campaignForm.name}
+                  onChange={(e) => setCampaignForm({ ...campaignForm, name: e.target.value })}
+                  required
+                />
+              </label>
+
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                Description
+                <textarea
+                  className="min-h-[96px] rounded-xl border border-border bg-surface-muted px-4 py-3 text-sm text-foreground outline-none focus:border-accent resize-none"
+                  value={campaignForm.description}
+                  onChange={(e) => setCampaignForm({ ...campaignForm, description: e.target.value })}
+                />
+              </label>
+
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                Target list
+                <select
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  value={campaignForm.targetListId}
+                  onChange={(e) => setCampaignForm({ ...campaignForm, targetListId: e.target.value })}
+                >
+                  <option value="">Select a target list</option>
+                  {lists.filter((list) => list.type === 'marketing').map((list) => (
+                    <option key={list.id} value={list.id}>{list.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                Opted out list
+                <select
+                  className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
+                  value={campaignForm.optedOutListId}
+                  onChange={(e) => setCampaignForm({ ...campaignForm, optedOutListId: e.target.value })}
+                >
+                  <option value="">Select an opted out list</option>
+                  {lists.map((list) => (
+                    <option key={list.id} value={list.id}>{list.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              {campaignFormError && <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">{campaignFormError}</p>}
+
+              <div className="flex gap-3 mt-2">
+                <button type="button" onClick={() => setShowCampaignModal(false)} className="flex-1 h-11 rounded-full border border-border text-sm font-semibold text-muted transition hover:bg-surface-muted">
+                  Cancel
+                </button>
+                <button type="submit" disabled={creatingCampaign} className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60">
+                  {creatingCampaign ? "Creating..." : "Create campaign"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* ── Toast stack ──────────────────────────────────── */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none" aria-live="polite">

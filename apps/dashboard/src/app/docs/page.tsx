@@ -76,7 +76,7 @@ export default function DocsPage() {
             </a>
             <a
               href="/signin"
-              className="rounded-full bg-foreground px-4 py-2 text-xs font-semibold text-background transition hover:bg-[#2a2a2a]"
+              className="rounded-full bg-foreground px-4 py-2 text-xs font-semibold text-background transition hover:opacity-80"
             >
               Sign in
             </a>

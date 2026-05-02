@@ -199,7 +199,7 @@ export function DomainSetupFlow({ token, onComplete, onCancel, compact = false }
               id="domain-setup-submit"
               type="submit"
               disabled={submitting}
-              className={`flex-1 ${h} rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60`}
+              className={`flex-1 ${h} rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60`}
             >
               {submitting ? "Registering with SES..." : "Continue →"}
             </button>
@@ -291,7 +291,7 @@ export function DomainSetupFlow({ token, onComplete, onCancel, compact = false }
             </button>
             <button
               onClick={() => setStep("verify")}
-              className={`flex-1 ${h} rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a]`}
+              className={`flex-1 ${h} rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80`}
             >
               I've added the records →
             </button>
@@ -334,7 +334,7 @@ export function DomainSetupFlow({ token, onComplete, onCancel, compact = false }
               id="domain-setup-check-dns"
               onClick={handleVerify}
               disabled={verifying || verifyOk}
-              className={`w-full ${h} rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60`}
+              className={`w-full ${h} rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60`}
             >
               {verifying ? "Checking SES..." : verifyOk ? "Verified ✓" : "Check DNS now"}
             </button>

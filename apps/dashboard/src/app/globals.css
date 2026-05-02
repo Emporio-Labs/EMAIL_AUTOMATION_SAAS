@@ -63,3 +63,23 @@ body {
 .fade-in-delay-2 {
   animation: rise 0.7s ease-out 0.16s both;
 }
+
+/* Global button hover pattern: black background + white text with smooth transition.
+   Add the `no-hover` class to any button to opt out of this rule (for destructive
+   or special-purpose buttons that need a different style). */
+button,
+button[type="button"],
+button[type="submit"],
+.btn,
+a.button {
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.08s ease;
+}
+
+button:not(.no-hover):hover,
+button[type="button"]:not(.no-hover):hover,
+button[type="submit"]:not(.no-hover):hover,
+.btn:not(.no-hover):hover,
+a.button:not(.no-hover):hover {
+  background-color: #000 !important;
+  color: #fff !important;
+}

@@ -280,7 +280,7 @@ function LoginCard({
 
         <button
           type="submit"
-          className="mt-2 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+          className="mt-2 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-black hover:text-white disabled:opacity-60"
           disabled={submitting}
         >
           {submitting ? "Signing in..." : "Sign in"}
@@ -378,7 +378,7 @@ function SignupCard({
         <p className="mt-3 text-sm text-muted leading-relaxed">{confirmation}</p>
         <button
           type="button"
-          className="mt-8 h-11 w-full rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a]"
+          className="mt-8 h-11 w-full rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-black hover:text-white"
           onClick={onSwitchToLogin}
         >
           Back to sign in
@@ -459,7 +459,7 @@ function SignupCard({
 
         <button
           type="submit"
-          className="mt-2 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+          className="mt-2 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-black hover:text-white disabled:opacity-60"
           disabled={submitting}
         >
           {submitting ? "Creating account..." : "Create account"}

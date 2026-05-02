@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import { authRouter } from './routes/auth';
 import { analyticsRouter } from './routes/analytics';
 import { contactsRouter } from './routes/contacts';
+import { campaignsRouter } from './routes/campaigns';
 import { domainsRouter } from './routes/domains';
 import { healthRouter } from './routes/health';
 import { internalRouter } from './routes/internal';
@@ -28,6 +29,7 @@ export function createApp() {
   app.use('/health', healthRouter);
   app.use('/v1/auth', authRouter);
   app.use('/v1/analytics', analyticsRouter);
+  app.use('/v1/campaigns', campaignsRouter);
   app.use('/v1/sends', sendsRouter);
   app.use('/v1/domains', domainsRouter);
   app.use('/v1/sending-addresses', sendingAddressesRouter);

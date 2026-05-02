@@ -93,7 +93,7 @@ export default function ContactsPage() {
             <button
               id="add-contact-btn"
               onClick={openModal}
-              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:bg-[#2a2a2a] active:scale-95"
+              className="h-9 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:opacity-80 active:scale-95"
             >
               + Add contact
             </button>
@@ -187,7 +187,10 @@ export default function ContactsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="flex flex-col gap-2 text-sm text-muted">
-                  First name
+                  <div className="flex items-baseline justify-between">
+                    <span>First name</span>
+                    <span className="text-xs text-muted">Optional</span>
+                  </div>
                   <input
                     id="contact-firstname-input"
                     className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
@@ -197,7 +200,10 @@ export default function ContactsPage() {
                   />
                 </label>
                 <label className="flex flex-col gap-2 text-sm text-muted">
-                  Last name
+                  <div className="flex items-baseline justify-between">
+                    <span>Last name</span>
+                    <span className="text-xs text-muted">Optional</span>
+                  </div>
                   <input
                     id="contact-lastname-input"
                     className="h-11 rounded-xl border border-border bg-surface-muted px-4 text-sm text-foreground outline-none focus:border-accent"
@@ -224,7 +230,7 @@ export default function ContactsPage() {
                   id="add-contact-submit"
                   type="submit"
                   disabled={creating}
-                  className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:bg-[#2a2a2a] disabled:opacity-60"
+                  className="flex-1 h-11 rounded-full bg-foreground text-sm font-semibold text-background transition hover:opacity-80 disabled:opacity-60"
                 >
                   {creating ? "Adding..." : "Add contact"}
                 </button>

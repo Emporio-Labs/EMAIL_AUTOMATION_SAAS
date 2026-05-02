@@ -143,7 +143,7 @@ export default function DomainsPage() {
             <button
               id="open-add-domain-modal"
               onClick={() => setShowAddModal(true)}
-              className="h-10 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:bg-[#2a2a2a]"
+              className="h-10 rounded-full bg-foreground px-5 text-sm font-semibold text-background transition hover:opacity-80"
             >
               + Add domain
             </button>
