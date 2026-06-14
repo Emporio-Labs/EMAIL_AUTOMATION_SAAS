@@ -239,27 +239,41 @@ export default function LandingPage() {
     </section>
 
     <section id="pricing" class="py-20 bg-white border-t border-gray-100">
-        <div class="max-w-4xl mx-auto px-6 text-center">
+        <div class="max-w-6xl mx-auto px-6 text-center">
             <h2 class="serif text-3xl mb-4">Pricing</h2>
-            <p class="text-muted mb-8">Free for users who sign up during our open beta.</p>
-            <div class="grid md:grid-cols-3 gap-6">
-                <div class="p-6 border border-gray-100 rounded-xl">
-                    <div class="text-xs uppercase text-muted">Starter</div>
-                    <h3 class="text-2xl font-semibold my-2">Free</h3>
-                    <p class="text-sm text-muted">Up to 10,000 emails / month during beta.</p>
-                    <div class="mt-4"><a href="#get-started" class="inline-block bg-black text-white px-4 py-2 rounded">Get Free</a></div>
+            <p class="text-muted mb-8">India-first pricing with zero forex friction via Razorpay. Overage: ₹0.80 per 1,000 emails.</p>
+            <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 text-left">
+                <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
+                    <div>
+                        <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Free</div>
+                        <h3 class="text-3xl font-semibold my-2">₹0</h3>
+                        <p class="text-sm text-gray-500">1,000 emails / month</p>
+                    </div>
+                    <div class="mt-6"><a href="#get-started" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Free</a></div>
                 </div>
-                <div class="p-6 border border-gray-100 rounded-xl">
-                    <div class="text-xs uppercase text-muted">Growth</div>
-                    <h3 class="text-2xl font-semibold my-2">Pay as you go</h3>
-                    <p class="text-sm text-muted">Scale with predictable per-email pricing.</p>
-                    <div class="mt-4"><a href="/pricing" class="inline-block bg-white border border-gray-200 px-4 py-2 rounded">See Pricing</a></div>
+                <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
+                    <div>
+                        <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Starter</div>
+                        <h3 class="text-3xl font-semibold my-2">₹299<span class="text-sm font-normal text-muted">/mo</span></h3>
+                        <p class="text-sm text-gray-500">25,000 emails / month</p>
+                    </div>
+                    <div class="mt-6"><a href="/signin?mode=signup" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Started</a></div>
                 </div>
-                <div class="p-6 border border-gray-100 rounded-xl">
-                    <div class="text-xs uppercase text-muted">Enterprise</div>
-                    <h3 class="text-2xl font-semibold my-2">Custom</h3>
-                    <p class="text-sm text-muted">SLA, dedicated IPs, and volume discounts.</p>
-                    <div class="mt-4"><a href="/contact" class="inline-block bg-white border border-gray-200 px-4 py-2 rounded">Contact Sales</a></div>
+                <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
+                    <div>
+                        <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Growth</div>
+                        <h3 class="text-3xl font-semibold my-2">₹799<span class="text-sm font-normal text-muted">/mo</span></h3>
+                        <p class="text-sm text-gray-500">100,000 emails / month</p>
+                    </div>
+                    <div class="mt-6"><a href="/signin?mode=signup" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Growth</a></div>
+                </div>
+                <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
+                    <div>
+                        <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Scale</div>
+                        <h3 class="text-3xl font-semibold my-2">₹1,999<span class="text-sm font-normal text-muted">/mo</span></h3>
+                        <p class="text-sm text-gray-500">500,000 emails / month</p>
+                    </div>
+                    <div class="mt-6"><a href="/signin?mode=signup" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Scale</a></div>
                 </div>
             </div>
         </div>

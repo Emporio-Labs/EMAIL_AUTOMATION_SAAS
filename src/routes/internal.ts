@@ -114,6 +114,7 @@ function buildSnsStringToSign(body: Record<string, unknown>): string {
 async function verifySnsSignature(body: Record<string, unknown>): Promise<void> {
   const certUrl = body.SigningCertURL as string | undefined;
   const signature = body.Signature as string | undefined;
+  const signatureVersion = body.SignatureVersion as string | undefined;
 
   if (!certUrl || !signature) {
     throw new Error('Missing SigningCertURL or Signature in SNS payload');
@@ -126,7 +127,10 @@ async function verifySnsSignature(body: Record<string, unknown>): Promise<void> 
   const cert = await httpsGetBody(certUrl);
   const message = buildSnsStringToSign(body);
 
-  const verify = crypto.createVerify('SHA1');
+  // SignatureVersion 2 is SHA256withRSA (crypto name: sha256)
+  // SignatureVersion 1 is SHA1withRSA (crypto name: sha1)
+  const algorithm = signatureVersion === '2' ? 'sha256' : 'sha1';
+  const verify = crypto.createVerify(algorithm);
   verify.update(message);
 
   if (!verify.verify(cert, signature, 'base64')) {

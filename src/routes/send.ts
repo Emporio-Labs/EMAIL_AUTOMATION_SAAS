@@ -8,6 +8,7 @@ import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
 import { normalizeEmail } from '../utils/normalize-email';
+import { generateUnsubscribeToken } from '../utils/unsubscribe-token';
 
 export const sendRouter = Router();
 
@@ -166,10 +167,12 @@ sendRouter.post('/', async (request, response) => {
 
   // ── Suppression filter ────────────────────────────────────────────────────
   // Block any address that has previously bounced or been complained about.
+  // We check for platform-wide suppressions (tenant_id IS NULL) or tenant-specific suppressions.
   const { data: suppressedRows } = await supabaseAdmin
     .from('suppressed')
     .select('email')
-    .in('email', uniqueRecipients);
+    .in('email', uniqueRecipients)
+    .or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
 
   const suppressedSet = new Set((suppressedRows ?? []).map((r: { email: string }) => r.email));
   const suppressedRecipients = uniqueRecipients.filter((e) => suppressedSet.has(e));
@@ -319,6 +322,15 @@ sendRouter.post('/', async (request, response) => {
   const failedJobs = [] as Array<{ jobId: string; reason: string }>;
 
   for (const job of jobsToPublish) {
+    const headers: Array<{ name: string; value: string }> = [];
+    if (job.email_type === 'marketing') {
+      const baseUrl = `${request.protocol}://${request.get('host')}`;
+      const unsubToken = generateUnsubscribeToken(job.to_email, job.tenant_id);
+      const unsubUrl = `${baseUrl}/v1/unsubscribe?t=${unsubToken}`;
+      headers.push({ name: 'List-Unsubscribe', value: `<${unsubUrl}>` });
+      headers.push({ name: 'List-Unsubscribe-Post', value: 'List-Unsubscribe=One-Click' });
+    }
+
     const messageBody = buildEmailJobMessage({
       jobId: job.job_id,
       tenantId: job.tenant_id,
@@ -327,6 +339,7 @@ sendRouter.post('/', async (request, response) => {
       subject: job.subject,
       html: job.html,
       configurationSetName: env.SES_CONFIGURATION_SET,
+      headers,
     });
 
     try {

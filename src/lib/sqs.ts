@@ -2,6 +2,11 @@ import { SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import { awsCredentials } from '../config/aws';
 import { env } from '../config/env';
 
+export type EmailHeader = {
+  name: string;
+  value: string;
+};
+
 export type EmailJobMessage = {
   jobId: string;
   tenantId: string;
@@ -10,6 +15,7 @@ export type EmailJobMessage = {
   subject: string;
   html: string;
   configurationSetName: string;
+  headers?: EmailHeader[];
 };
 
 const client = new SQSClient({
@@ -23,6 +29,7 @@ export function buildEmailJobMessage(input: Omit<EmailJobMessage, 'version'>): s
     job_id: input.jobId,
     tenant_id: input.tenantId,
     configuration_set_name: input.configurationSetName,
+    headers: input.headers,
   };
 
   return JSON.stringify(payload);

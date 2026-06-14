@@ -54,6 +54,35 @@ domainsRouter.post('/', async (request, response) => {
   const tenantId = request.tenant!.id;
   const domain = parsed.data.domain.toLowerCase();
 
+  // Check if domain is already registered for this tenant
+  const { data: existingDomain, error: checkError } = await supabaseAdmin
+    .from('domains')
+    .select('id, domain, verified, dkim_tokens, created_at, verified_at')
+    .eq('tenant_id', tenantId)
+    .eq('domain', domain)
+    .maybeSingle();
+
+  if (checkError) {
+    response.status(500).json({ error: 'Failed to check existing domain' });
+    return;
+  }
+
+  if (existingDomain) {
+    if (existingDomain.verified) {
+      response.status(409).json({ error: 'Domain already registered and verified for this tenant' });
+      return;
+    }
+
+    // Gracefully resume domain verification for unverified domain
+    const dnsRecords = buildFullDnsRecords(domain, existingDomain.dkim_tokens ?? []);
+    response.status(200).json({
+      domain: existingDomain,
+      dnsRecords,
+      message: 'Domain registration resumed. Please verify the DNS records.',
+    });
+    return;
+  }
+
   // ── Register with SES (SESv2) ─────────────────────────────────────────────
   let dkimTokens: string[];
   try {
