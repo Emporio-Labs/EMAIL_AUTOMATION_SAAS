@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
+import { processTenantLimits } from '../utils/tenant-limits';
 
 export async function requireTenant(request: Request, response: Response, next: NextFunction): Promise<void> {
   const userId = request.authUser?.id;
@@ -28,7 +29,7 @@ export async function requireTenant(request: Request, response: Response, next: 
 
   const { data: tenant, error: tenantError } = await supabaseAdmin
     .from('tenants')
-    .select('id, name, slug')
+    .select('id, name, slug, plan, rate_limit, monthly_email_limit, monthly_email_count, last_billing_reset, is_suspended, max_domains, max_sending_addresses, max_recipients_per_send, can_send_marketing, can_use_webhooks, can_track_opens, can_track_clicks, force_sandbox, trial_ends_at, internal_notes')
     .eq('id', membership.tenant_id)
     .maybeSingle();
 
@@ -38,11 +39,33 @@ export async function requireTenant(request: Request, response: Response, next: 
     return;
   }
 
+  const limitData = await processTenantLimits(tenant as any);
+
+  if (limitData.isSuspended) {
+    response.status(403).json({ error: 'Account suspended. Please contact support.' });
+    return;
+  }
+
   request.tenant = {
     id: tenant.id,
     name: tenant.name,
     slug: tenant.slug,
     role: membership.role,
+    plan: limitData.plan,
+    rateLimit: limitData.rateLimit,
+    monthlyEmailLimit: limitData.monthlyEmailLimit,
+    monthlyEmailCount: limitData.monthlyEmailCount,
+    isSuspended: limitData.isSuspended,
+    max_domains: limitData.max_domains,
+    max_sending_addresses: limitData.max_sending_addresses,
+    max_recipients_per_send: limitData.max_recipients_per_send,
+    can_send_marketing: limitData.can_send_marketing,
+    can_use_webhooks: limitData.can_use_webhooks,
+    can_track_opens: limitData.can_track_opens,
+    can_track_clicks: limitData.can_track_clicks,
+    force_sandbox: limitData.force_sandbox,
+    trial_ends_at: limitData.trial_ends_at,
+    internal_notes: limitData.internal_notes,
   };
 
   next();

@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/require-auth';
 import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { sesRegisterDomain, sesGetDomainStatus, buildFullDnsRecords } from '../lib/ses';
+import { PLAN_LIMITS, resolvePlanLimit, PlanName } from '../config/plans';
 
 export const domainsRouter = Router();
 
@@ -81,6 +82,28 @@ domainsRouter.post('/', async (request, response) => {
       message: 'Domain registration resumed. Please verify the DNS records.',
     });
     return;
+  }
+
+  // Enforce domain limit check
+  const plan = request.tenant!.plan as PlanName;
+  const planLimits = PLAN_LIMITS[plan];
+  const maxDomains = resolvePlanLimit(request.tenant!.max_domains, planLimits.max_domains);
+
+  if (maxDomains !== null) {
+    const { count, error: countError } = await supabaseAdmin
+      .from('domains')
+      .select('id', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId);
+
+    if (countError) {
+      response.status(500).json({ error: 'Failed to retrieve domain count' });
+      return;
+    }
+
+    if ((count ?? 0) >= maxDomains) {
+      response.status(403).json({ error: 'Domain limit reached. Upgrade your plan.' });
+      return;
+    }
   }
 
   // ── Register with SES (SESv2) ─────────────────────────────────────────────

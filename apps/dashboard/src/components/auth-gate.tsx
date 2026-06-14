@@ -10,6 +10,7 @@ type AuthContextValue = {
   user: { id: string; email?: string | null } | null;
   tenant: { id: string; name: string; slug: string | null; role: string } | null;
   pendingVerification: boolean;
+  isAdmin: boolean;
   signOut: () => void;
 };
 
@@ -33,6 +34,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
   const [user, setUser] = useState<AuthContextValue["user"]>(null);
   const [tenant, setTenant] = useState<AuthContextValue["tenant"]>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +73,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         setToken(stored);
         setUser(response.user);
         setTenant(response.tenant);
+        setIsAdmin((response as any).isAdmin ?? false);
         setError(null);
         await checkOnboarding(stored);
       })
@@ -92,13 +95,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setToken(null);
     setUser(null);
     setTenant(null);
+    setIsAdmin(false);
     setNeedsOnboarding(false);
     setPendingVerification(false);
   };
 
   const contextValue = useMemo(
-    () => ({ token, user, tenant, pendingVerification, signOut }),
-    [token, user, tenant, pendingVerification],
+    () => ({ token, user, tenant, pendingVerification, isAdmin, signOut }),
+    [token, user, tenant, pendingVerification, isAdmin],
   );
 
   if (loading) {
@@ -121,6 +125,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         setToken={setToken}
         setUser={setUser}
         setTenant={setTenant}
+        setIsAdmin={setIsAdmin}
         setError={setError}
         error={error}
         onLoginSuccess={checkOnboarding}
@@ -178,6 +183,7 @@ type CardProps = {
   setToken: (token: string) => void;
   setUser: (user: AuthContextValue["user"]) => void;
   setTenant: (tenant: AuthContextValue["tenant"]) => void;
+  setIsAdmin: (isAdmin: boolean) => void;
   setError: (value: string | null) => void;
   error: string | null;
   onLoginSuccess: (token: string) => Promise<void>; // existing user — checks API
@@ -208,6 +214,7 @@ function LoginCard({
   setToken,
   setUser,
   setTenant,
+  setIsAdmin,
   setError,
   error,
   onLoginSuccess,
@@ -229,6 +236,7 @@ function LoginCard({
       const profile = await fetchMe(result.access_token);
       setUser(profile.user);
       setTenant(profile.tenant);
+      setIsAdmin((profile as any).isAdmin ?? false);
       await onLoginSuccess(result.access_token);
     } catch (err: any) {
       setError(err?.message ?? "Failed to sign in");
@@ -307,6 +315,7 @@ function SignupCard({
   setToken,
   setUser,
   setTenant,
+  setIsAdmin,
   setError,
   error,
   onSignupSuccess,
@@ -356,6 +365,7 @@ function SignupCard({
       const profile = await fetchMe(session.access_token);
       setUser(profile.user);
       setTenant(profile.tenant);
+      setIsAdmin((profile as any).isAdmin ?? false);
       // New signup → always show onboarding (they can't have a domain yet)
       onSignupSuccess();
     } catch (err: any) {

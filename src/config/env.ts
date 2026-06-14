@@ -17,6 +17,9 @@ const envSchema = z.object({
   SQS_QUEUE_URL: z.string().url(),
   SES_CONFIGURATION_SET: z.string().min(1).default('email-config'),
   INTERNAL_KEY: z.string().min(32),
+  PLATFORM_FROM_EMAIL: z.string().email(),
+  PLATFORM_FROM_NAME: z.string().min(1),
+  BASE_URL: z.string().url(),
 });
 
 export const env = envSchema.parse(process.env);

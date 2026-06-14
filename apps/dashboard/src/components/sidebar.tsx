@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "./auth-gate";
 
 const navItems = [
   { href: "/overview", label: "Overview" },
@@ -15,6 +16,11 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { isAdmin } = useAuth();
+
+  const visibleItems = isAdmin 
+    ? [...navItems, { href: "/admin", label: "Admin Panel" }] 
+    : navItems;
 
   return (
     <aside className="hidden lg:flex lg:w-64 lg:flex-col lg:gap-10 border-r border-border bg-surface/70 px-6 py-8">
@@ -29,8 +35,8 @@ export function Sidebar() {
       </div>
 
       <nav className="flex flex-col gap-2">
-        {navItems.map((item) => {
-          const active = pathname === item.href;
+        {visibleItems.map((item) => {
+          const active = pathname === item.href || pathname.startsWith(item.href + "/");
           return (
             <Link
               key={item.href}

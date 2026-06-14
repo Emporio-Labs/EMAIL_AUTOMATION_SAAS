@@ -15,6 +15,8 @@ import { sendsRouter } from './routes/sends';
 import { sendRouter } from './routes/send';
 import { unsubscribeRouter } from './routes/unsubscribe';
 import { sendingAddressesRouter } from './routes/sending-addresses';
+import { adminRouter } from './routes/admin';
+import { trackingRouter } from './routes/tracking';
 
 export function createApp() {
   const app = express();
@@ -38,6 +40,8 @@ export function createApp() {
   app.use('/v1/api-keys', apiKeysRouter);
   app.use('/v1/send', sendRouter);
   app.use('/v1/unsubscribe', unsubscribeRouter);
+  app.use('/v1/admin', adminRouter);
+  app.use('/t', trackingRouter);
   app.use('/internal', internalRouter);
 
   app.use((_request, response) => {

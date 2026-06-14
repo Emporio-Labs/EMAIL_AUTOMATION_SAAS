@@ -143,6 +143,36 @@ async function verifySnsSignature(body: Record<string, unknown>): Promise<void> 
 // Route: POST /internal/sns
 // ─────────────────────────────────────────────────────────────────────────────
 
+async function resolveJobAndTenant(
+  recipientEmail: string,
+  sesEvent: Record<string, any>
+): Promise<{ jobId: string; tenantId: string } | null> {
+  const mail = sesEvent.mail as Record<string, any> | undefined;
+  const tags = mail?.tags as Record<string, string[]> | undefined;
+
+  let tenantId = tags?.tenant_id?.[0] || tags?.tenantId?.[0];
+  let jobId = tags?.job_id?.[0] || tags?.jobId?.[0];
+
+  if (jobId && tenantId) {
+    return { jobId, tenantId };
+  }
+
+  // Fallback to DB lookup
+  const { data: matchedJob } = await supabaseAdmin
+    .from('email_jobs')
+    .select('job_id, tenant_id')
+    .eq('to_email', recipientEmail)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (matchedJob) {
+    return { jobId: matchedJob.job_id, tenantId: matchedJob.tenant_id };
+  }
+
+  return null;
+}
+
 internalRouter.post('/sns', async (request, response) => {
   try {
     const raw = request.body;
@@ -218,26 +248,42 @@ internalRouter.post('/sns', async (request, response) => {
           const bounceType = (bounce?.bounceType as string | undefined)?.toLowerCase() ?? 'unknown';
           const bouncedRecipients = bounce?.bouncedRecipients as Array<Record<string, unknown>> | undefined;
 
-          // Only hard (permanent) bounces are suppressed; soft bounces are transient.
-          if (bounceType === 'permanent' && bouncedRecipients?.length) {
+          if (bouncedRecipients?.length) {
             const emails = bouncedRecipients
               .map((r) => r.emailAddress as string)
               .filter(Boolean);
 
-            console.log('[SNS] Hard bounce — suppressing:', emails);
+            if (bounceType === 'permanent') {
+              console.log('[SNS] Hard bounce — suppressing:', emails);
 
-            // tenant_id is NULL = platform-level suppression (affects all tenants).
-            // For per-tenant suppression, pass tenant_id as an SES message tag
-            // in the Go worker and read it from sesEvent.mail.tags here.
-            const { error } = await supabaseAdmin
-              .from('suppressed')
-              .insert(emails.map((email) => ({ tenant_id: null, email, reason: 'bounce' })));
+              // tenant_id is NULL = platform-level suppression (affects all tenants).
+              // For per-tenant suppression, pass tenant_id as an SES message tag
+              // in the Go worker and read it from sesEvent.mail.tags here.
+              const { error } = await supabaseAdmin
+                .from('suppressed')
+                .insert(emails.map((email) => ({ tenant_id: null, email, reason: 'bounce' })));
 
-            if (error && error.code !== '23505') {
-              console.error('[SNS] Failed to insert bounce suppressions:', error);
+              if (error && error.code !== '23505') {
+                console.error('[SNS] Failed to insert bounce suppressions:', error);
+              }
+            } else {
+              console.log(`[SNS] Soft/transient bounce (${bounceType}) — not suppressing`);
             }
-          } else {
-            console.log(`[SNS] Soft/transient bounce (${bounceType}) — not suppressing`);
+
+            // Log event in email_job_events
+            for (const email of emails) {
+              const resolved = await resolveJobAndTenant(email, sesEvent);
+              if (resolved) {
+                await supabaseAdmin
+                  .from('email_job_events')
+                  .insert({
+                    job_id: resolved.jobId,
+                    tenant_id: resolved.tenantId,
+                    event_type: 'bounced',
+                    metadata: { bounceType, email }
+                  });
+              }
+            }
           }
         }
 
@@ -245,6 +291,7 @@ internalRouter.post('/sns', async (request, response) => {
         if (notificationType === 'Complaint') {
           const complaint = sesEvent.complaint as Record<string, unknown> | undefined;
           const complainedRecipients = complaint?.complainedRecipients as Array<Record<string, unknown>> | undefined;
+          const complaintFeedbackType = complaint?.complaintFeedbackType as string | undefined;
 
           if (complainedRecipients?.length) {
             const emails = complainedRecipients
@@ -260,6 +307,21 @@ internalRouter.post('/sns', async (request, response) => {
             if (error && error.code !== '23505') {
               console.error('[SNS] Failed to insert complaint suppressions:', error);
             }
+
+            // Log event in email_job_events
+            for (const email of emails) {
+              const resolved = await resolveJobAndTenant(email, sesEvent);
+              if (resolved) {
+                await supabaseAdmin
+                  .from('email_job_events')
+                  .insert({
+                    job_id: resolved.jobId,
+                    tenant_id: resolved.tenantId,
+                    event_type: 'complained',
+                    metadata: { complaintFeedbackType, email }
+                  });
+              }
+            }
           }
         }
 
@@ -269,6 +331,26 @@ internalRouter.post('/sns', async (request, response) => {
           const recipients = delivery?.recipients as Array<string> | undefined;
           if (recipients?.length) {
             console.log('[SNS] Delivery confirmed for:', recipients);
+            for (const email of recipients) {
+              const resolved = await resolveJobAndTenant(email, sesEvent);
+              if (resolved) {
+                const now = new Date().toISOString();
+                await Promise.all([
+                  supabaseAdmin
+                    .from('email_jobs')
+                    .update({ status: 'delivered', delivered_at: now, sent_at: now })
+                    .eq('job_id', resolved.jobId),
+                  supabaseAdmin
+                    .from('email_job_events')
+                    .insert({
+                      job_id: resolved.jobId,
+                      tenant_id: resolved.tenantId,
+                      event_type: 'delivered',
+                      metadata: { email }
+                    })
+                ]);
+              }
+            }
           }
         }
 

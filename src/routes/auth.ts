@@ -60,6 +60,20 @@ authRouter.post('/signup', async (request, response) => {
 
   const { email, password, tenantName } = parsed.data;
 
+  // Verify that the email is whitelisted as a beta user
+  const { data: betaUser, error: betaError } = await supabaseAdmin
+    .from('beta_users')
+    .select('email')
+    .eq('email', email.toLowerCase())
+    .maybeSingle();
+
+  if (betaError || !betaUser) {
+    response.status(403).json({
+      error: 'Signups are currently restricted to beta users. Please request beta access.'
+    });
+    return;
+  }
+
   // Create the Supabase auth user
   const { data: authData, error: authError } = await supabasePublic.auth.signUp({ email, password });
 
@@ -116,10 +130,17 @@ authRouter.post('/signup', async (request, response) => {
   });
 });
 
-authRouter.get('/me', requireAuth, requireTenant, (request, response) => {
+authRouter.get('/me', requireAuth, requireTenant, async (request, response) => {
+  const { data: adminRow } = await supabaseAdmin
+    .from('system_admins')
+    .select('user_id')
+    .eq('user_id', request.authUser!.id)
+    .maybeSingle();
+
   response.json({
     user: request.authUser,
     tenant: request.tenant,
+    isAdmin: Boolean(adminRow),
   });
 });
 

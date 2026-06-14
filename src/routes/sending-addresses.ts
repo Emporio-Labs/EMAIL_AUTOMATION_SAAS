@@ -4,6 +4,7 @@ import { requireAuth } from '../middleware/require-auth';
 import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
 import { normalizeEmail } from '../utils/normalize-email';
+import { PLAN_LIMITS, resolvePlanLimit, PlanName } from '../config/plans';
 
 export const sendingAddressesRouter = Router();
 
@@ -45,6 +46,27 @@ sendingAddressesRouter.post('/', async (request, response) => {
   }
 
   const tenantId = request.tenant!.id;
+  const planName = (request.tenant?.plan || 'free') as PlanName;
+  const planLimits = PLAN_LIMITS[planName];
+  const limit = resolvePlanLimit(request.tenant?.max_sending_addresses, planLimits.max_sending_addresses);
+
+  if (limit !== null) {
+    const { count, error: countError } = await supabaseAdmin
+      .from('sending_addresses')
+      .select('*', { count: 'exact', head: true })
+      .eq('tenant_id', tenantId);
+
+    if (countError) {
+      response.status(500).json({ error: 'Failed to verify sending address limit' });
+      return;
+    }
+
+    if ((count ?? 0) >= limit) {
+      response.status(403).json({ error: 'Sending address limit reached. Upgrade your plan to add more.' });
+      return;
+    }
+  }
+
   const address = normalizeEmail(parsed.data.address);
   const domain = address.split('@')[1]?.toLowerCase();
 

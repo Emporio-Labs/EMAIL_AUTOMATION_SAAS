@@ -9,6 +9,8 @@ import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
 import { normalizeEmail } from '../utils/normalize-email';
 import { generateUnsubscribeToken } from '../utils/unsubscribe-token';
+import { PLAN_LIMITS, resolvePlanLimit, resolvePlanBooleanLimit, PlanName } from '../config/plans';
+import { injectTrackingPixel, rewriteLinks } from '../lib/tracker';
 
 export const sendRouter = Router();
 
@@ -62,9 +64,14 @@ sendRouter.post('/', async (request, response) => {
   }
 
   const tenantId = request.tenant?.id;
-  const isSandbox = request.keyType === 'sandbox';
+  const forceSandbox = request.tenant?.force_sandbox ?? false;
+  const isSandbox = request.keyType === 'sandbox' || forceSandbox;
   const fromEmail = normalizeEmail(parsed.data.from);
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
+
+  const plan = request.tenant?.plan as PlanName;
+  const trialEndsAt = request.tenant?.trial_ends_at;
+  const effectivePlan: PlanName = (trialEndsAt && new Date() > new Date(trialEndsAt)) ? 'free' : plan;
 
   let campaignRecipients: string[] = [];
 
@@ -165,6 +172,20 @@ sendRouter.post('/', async (request, response) => {
     return;
   }
 
+  // ── Limits check before suppression ─────────────────────────────────────────
+  const planLimits = PLAN_LIMITS[effectivePlan];
+  const maxRecipients = resolvePlanLimit(request.tenant?.max_recipients_per_send, planLimits.max_recipients_per_send);
+  if (maxRecipients !== null && uniqueRecipients.length > maxRecipients) {
+    response.status(403).json({ error: `Recipient limit of ${maxRecipients} exceeded.` });
+    return;
+  }
+
+  const canMarketing = resolvePlanBooleanLimit(request.tenant?.can_send_marketing, planLimits.can_send_marketing);
+  if (parsed.data.emailType === 'marketing' && !canMarketing) {
+    response.status(403).json({ error: 'Marketing emails require Starter plan or above.' });
+    return;
+  }
+
   // ── Suppression filter ────────────────────────────────────────────────────
   // Block any address that has previously bounced or been complained about.
   // We check for platform-wide suppressions (tenant_id IS NULL) or tenant-specific suppressions.
@@ -184,6 +205,19 @@ sendRouter.post('/', async (request, response) => {
 
   if (sendableRecipients.length === 0) {
     response.status(422).json({ error: 'All recipients are suppressed', suppressedRecipients });
+    return;
+  }
+
+  // ── Monthly limit check ────────────────────────────────────────────────────
+  const monthlyLimit = request.tenant?.monthlyEmailLimit ?? 1000;
+  const currentMonthlyCount = request.tenant?.monthlyEmailCount ?? 0;
+  const emailsToSend = sendableRecipients.length;
+
+  if (currentMonthlyCount + emailsToSend > monthlyLimit) {
+    response.status(402).json({
+      error: 'Monthly email sending limit exceeded',
+      hint: `You have sent ${currentMonthlyCount} of ${monthlyLimit} emails. Sending this batch of ${emailsToSend} emails would exceed your limit. Please upgrade your plan or contact support.`,
+    });
     return;
   }
 
@@ -272,18 +306,52 @@ sendRouter.post('/', async (request, response) => {
     }
   }
 
+  // ── Open and Click Tracking Settings ───────────────────────────────────────
+  const trackOpens = resolvePlanBooleanLimit(request.tenant?.can_track_opens, planLimits.can_track_opens);
+  const trackClicks = resolvePlanBooleanLimit(request.tenant?.can_track_clicks, planLimits.can_track_clicks);
+
   const sentAt = isSandbox ? new Date().toISOString() : null;
-  const jobRows = sendableRecipients.map((email) => ({
-    tenant_id: tenantId as string,
-    campaign_id: parsed.data.campaignId ?? null,
-    from_email: fromEmail,
-    to_email: email,
-    subject: parsed.data.subject,
-    html: parsed.data.html,
-    status: isSandbox ? 'delivered' : 'queued',
-    sent_at: sentAt,
-    email_type: parsed.data.emailType,
-  }));
+  const jobRows = sendableRecipients.map((email) => {
+    const jobId = randomUUID();
+    let html = parsed.data.html;
+
+    // 1. Inject unsubscribe footer
+    const unsubToken = generateUnsubscribeToken(email, tenantId as string);
+    const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${unsubToken}`;
+    const tenantName = request.tenant?.name || 'our service';
+    const footerHtml = `<div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; font-size: 12px; color: #666; text-align: center;">You are receiving this email from ${tenantName}. If you no longer wish to receive these emails, you can <a href="${unsubUrl}" style="color: #007bff; text-decoration: underline;">unsubscribe here</a>.</div>`;
+
+    // Inject footerHtml before </body> or at the end of html
+    const bodyIndex = html.toLowerCase().lastIndexOf('</body>');
+    if (bodyIndex === -1) {
+      html = html + footerHtml;
+    } else {
+      html = html.substring(0, bodyIndex) + footerHtml + html.substring(bodyIndex);
+    }
+
+    // 2. Inject tracking pixel if trackOpens is true
+    if (trackOpens) {
+      html = injectTrackingPixel(html, jobId, env.BASE_URL);
+    }
+
+    // 3. Rewrite links for click tracking if trackClicks is true
+    if (trackClicks) {
+      html = rewriteLinks(html, jobId, env.BASE_URL);
+    }
+
+    return {
+      job_id: jobId,
+      tenant_id: tenantId as string,
+      campaign_id: parsed.data.campaignId ?? null,
+      from_email: fromEmail,
+      to_email: email,
+      subject: parsed.data.subject,
+      html: html,
+      status: isSandbox ? 'delivered' : 'queued',
+      sent_at: sentAt,
+      email_type: parsed.data.emailType,
+    };
+  });
 
   const { data: insertedJobs, error: insertError } = await supabaseAdmin
     .from('email_jobs')
@@ -295,9 +363,23 @@ sendRouter.post('/', async (request, response) => {
     return;
   }
 
+  // Increment monthly email count for the tenant
+  const { error: incrementError } = await supabaseAdmin.rpc('increment_tenant_email_count', {
+    tenant_id: tenantId,
+    increment_by: emailsToSend,
+  });
+
+  if (incrementError) {
+    console.error('[send] Failed to increment email count via RPC, attempting fallback:', incrementError);
+    await supabaseAdmin
+      .from('tenants')
+      .update({ monthly_email_count: currentMonthlyCount + emailsToSend })
+      .eq('id', tenantId as string);
+  }
+
   const jobsToPublish = insertError || !insertedJobs
     ? jobRows.map((job) => ({
-        job_id: randomUUID(),
+        job_id: job.job_id,
         tenant_id: job.tenant_id,
         contact_id: null,
         list_id: null,
@@ -324,9 +406,8 @@ sendRouter.post('/', async (request, response) => {
   for (const job of jobsToPublish) {
     const headers: Array<{ name: string; value: string }> = [];
     if (job.email_type === 'marketing') {
-      const baseUrl = `${request.protocol}://${request.get('host')}`;
       const unsubToken = generateUnsubscribeToken(job.to_email, job.tenant_id);
-      const unsubUrl = `${baseUrl}/v1/unsubscribe?t=${unsubToken}`;
+      const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${unsubToken}`;
       headers.push({ name: 'List-Unsubscribe', value: `<${unsubUrl}>` });
       headers.push({ name: 'List-Unsubscribe-Post', value: 'List-Unsubscribe=One-Click' });
     }
