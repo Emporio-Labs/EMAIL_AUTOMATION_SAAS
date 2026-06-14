@@ -29,7 +29,7 @@ export async function requireTenant(request: Request, response: Response, next: 
 
   const { data: tenant, error: tenantError } = await supabaseAdmin
     .from('tenants')
-    .select('id, name, slug, plan, rate_limit, monthly_email_limit, monthly_email_count, last_billing_reset, is_suspended, max_domains, max_sending_addresses, max_recipients_per_send, can_send_marketing, can_use_webhooks, can_track_opens, can_track_clicks, force_sandbox, trial_ends_at, internal_notes')
+    .select('id, name, slug, plan, rate_limit, monthly_email_limit, monthly_email_count, last_billing_reset, is_suspended, max_domains, max_sending_addresses, max_recipients_per_send, can_send_marketing, can_use_webhooks, can_track_opens, can_track_clicks, force_sandbox, trial_ends_at, internal_notes, beta_terms_accepted_at, accepted_terms_version')
     .eq('id', membership.tenant_id)
     .maybeSingle();
 
@@ -66,6 +66,8 @@ export async function requireTenant(request: Request, response: Response, next: 
     force_sandbox: limitData.force_sandbox,
     trial_ends_at: limitData.trial_ends_at,
     internal_notes: limitData.internal_notes,
+    beta_terms_accepted_at: tenant.beta_terms_accepted_at,
+    accepted_terms_version: tenant.accepted_terms_version,
   };
 
   next();

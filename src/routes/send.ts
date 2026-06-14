@@ -9,6 +9,7 @@ import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
 import { normalizeEmail } from '../utils/normalize-email';
 import { generateUnsubscribeToken } from '../utils/unsubscribe-token';
+import { computeHtmlHash } from '../utils/hash';
 import { PLAN_LIMITS, resolvePlanLimit, resolvePlanBooleanLimit, PlanName } from '../config/plans';
 import { injectTrackingPixel, rewriteLinks } from '../lib/tracker';
 
@@ -339,6 +340,8 @@ sendRouter.post('/', async (request, response) => {
       html = rewriteLinks(html, jobId, env.BASE_URL);
     }
 
+    const htmlHash = computeHtmlHash(html);
+
     return {
       job_id: jobId,
       tenant_id: tenantId as string,
@@ -346,17 +349,37 @@ sendRouter.post('/', async (request, response) => {
       from_email: fromEmail,
       to_email: email,
       subject: parsed.data.subject,
-      html: html,
+      html_hash: htmlHash,
+      _inMemoryHtml: html,
       status: isSandbox ? 'delivered' : 'queued',
       sent_at: sentAt,
       email_type: parsed.data.emailType,
     };
   });
 
+  // Extract unique HTML hashes and their content to save database space
+  const uniqueHtmls = Array.from(
+    new Map(jobRows.map((row) => [row.html_hash, row._inMemoryHtml])).entries()
+  ).map(([hash, html]) => ({ hash, html }));
+
+  // Upsert deduplicated HTML content
+  const { error: htmlInsertError } = await supabaseAdmin
+    .from('email_html_contents')
+    .upsert(uniqueHtmls, { onConflict: 'hash' });
+
+  if (htmlInsertError && !env.AUTH_BYPASS) {
+    console.error('[send] Failed to upsert email html contents:', htmlInsertError);
+    response.status(500).json({ error: 'Failed to create email jobs (HTML storage error)' });
+    return;
+  }
+
+  // Remove the temporary _inMemoryHtml property before inserting into email_jobs
+  const dbJobRows = jobRows.map(({ _inMemoryHtml, ...row }) => row);
+
   const { data: insertedJobs, error: insertError } = await supabaseAdmin
     .from('email_jobs')
-    .insert(jobRows)
-    .select('job_id, tenant_id, contact_id, list_id, from_email, to_email, subject, html, email_type');
+    .insert(dbJobRows)
+    .select('job_id, tenant_id, contact_id, list_id, from_email, to_email, subject, html_hash, email_type');
 
   if ((insertError || !insertedJobs) && !env.AUTH_BYPASS) {
     response.status(500).json({ error: 'Failed to create email jobs' });
@@ -386,10 +409,23 @@ sendRouter.post('/', async (request, response) => {
         from_email: job.from_email,
         to_email: job.to_email,
         subject: job.subject,
-        html: job.html,
+        html: job._inMemoryHtml,
         email_type: job.email_type,
       }))
-    : insertedJobs;
+    : insertedJobs.map((job) => {
+        const originalJob = jobRows.find((rj) => rj.job_id === job.job_id);
+        return {
+          job_id: job.job_id,
+          tenant_id: job.tenant_id,
+          contact_id: job.contact_id,
+          list_id: job.list_id,
+          from_email: job.from_email,
+          to_email: job.to_email,
+          subject: job.subject,
+          html: originalJob?._inMemoryHtml || '',
+          email_type: job.email_type,
+        };
+      });
 
   if (isSandbox) {
     response.status(202).json({

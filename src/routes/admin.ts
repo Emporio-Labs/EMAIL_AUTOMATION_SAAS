@@ -7,6 +7,7 @@ import { requireAdmin } from '../middleware/require-admin';
 import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
 import { env } from '../config/env';
+import { computeHtmlHash } from '../utils/hash';
 
 export const adminRouter = Router();
 
@@ -191,6 +192,15 @@ adminRouter.post('/beta-users', async (request, response) => {
       </div>
     `;
 
+    const inviteHtmlHash = computeHtmlHash(inviteHtml);
+
+    // Upsert invitation HTML
+    const { error: htmlError } = await supabaseAdmin
+      .from('email_html_contents')
+      .upsert({ hash: inviteHtmlHash, html: inviteHtml }, { onConflict: 'hash' });
+
+    if (htmlError) throw htmlError;
+
     const { data: job, error: jobError } = await supabaseAdmin
       .from('email_jobs')
       .insert({
@@ -198,7 +208,7 @@ adminRouter.post('/beta-users', async (request, response) => {
         from_email: fromEmail,
         to_email: email,
         subject: "You've been invited to SwayamMail Beta",
-        html: inviteHtml,
+        html_hash: inviteHtmlHash,
         status: 'queued',
         email_type: 'transactional',
       })

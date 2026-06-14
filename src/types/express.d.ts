@@ -24,6 +24,8 @@ declare global {
         force_sandbox?: boolean | null;
         trial_ends_at?: string | null;
         internal_notes?: string | null;
+        beta_terms_accepted_at?: string | null;
+        accepted_terms_version?: string | null;
       };
       apiKey?: {
         id: string;

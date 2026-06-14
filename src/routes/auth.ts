@@ -23,6 +23,10 @@ const signupSchema = z.object({
   tenantName: z.string().trim().min(2).max(80),
 });
 
+const acceptTermsSchema = z.object({
+  version: z.string().min(1),
+});
+
 authRouter.post('/login', async (request, response) => {
   const parsed = loginSchema.safeParse(request.body);
 
@@ -141,7 +145,39 @@ authRouter.get('/me', requireAuth, requireTenant, async (request, response) => {
     user: request.authUser,
     tenant: request.tenant,
     isAdmin: Boolean(adminRow),
+    termsAccepted: request.tenant?.beta_terms_accepted_at !== null && request.tenant?.beta_terms_accepted_at !== undefined,
+    termsVersion: request.tenant?.accepted_terms_version ?? null,
   });
+});
+
+authRouter.post('/accept-terms', requireAuth, requireTenant, async (request, response) => {
+  const parsed = acceptTermsSchema.safeParse(request.body);
+
+  if (!parsed.success) {
+    response.status(400).json({ error: 'Invalid payload', issues: parsed.error.flatten() });
+    return;
+  }
+
+  const { version } = parsed.data;
+  const tenantId = request.tenant!.id;
+
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabaseAdmin
+    .from('tenants')
+    .update({
+      beta_terms_accepted_at: now,
+      privacy_policy_accepted_at: now,
+      accepted_terms_version: version,
+    })
+    .eq('id', tenantId);
+
+  if (updateError) {
+    console.error('[accept-terms] update error:', updateError);
+    response.status(500).json({ error: 'Failed to accept terms', detail: updateError.message });
+    return;
+  }
+
+  response.json({ success: true });
 });
 
 authRouter.post('/onboard', requireAuth, async (request, response) => {
