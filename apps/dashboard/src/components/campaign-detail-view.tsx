@@ -11,7 +11,7 @@ export type CampaignItem = {
   tenant_id: string;
   name: string;
   description: string | null;
-  status: "draft" | "scheduled" | "running" | "paused" | "completed";
+  status: "draft" | "scheduled" | "running" | "paused" | "completed" | "failed";
   contacts_count: number;
   created_at: string;
   updated_at: string;
@@ -130,17 +130,18 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
     };
   }, [history, suppressionItems, campaignContacts]);
 
-  async function handleStatusChange(nextStatus: CampaignItem["status"]) {
+  async function handleAction(action: "pause" | "resume" | "cancel") {
     if (!token || !campaign) return;
 
     setUpdatingStatus(true);
     try {
-      const response = await apiFetch<CampaignResponse>(`/v1/campaigns/${campaign.id}/status`, token, {
-        method: "PATCH",
-        body: JSON.stringify({ status: nextStatus }),
+      const response = await apiFetch<CampaignResponse>(`/v1/campaigns/${campaign.id}/${action}`, token, {
+        method: "POST",
       });
 
       setCampaign(response.campaign);
+    } catch {
+      // The campaign page shows the reason; here we just keep the old state.
     } finally {
       setUpdatingStatus(false);
     }
@@ -191,21 +192,28 @@ export function CampaignDetailView({ campaignId, section }: { campaignId: string
               <p className="mt-1 text-sm font-semibold text-foreground">{campaign.status}</p>
             </div>
             <div className="ml-auto flex flex-wrap gap-2">
-              {(["draft", "scheduled", "running", "paused", "completed"] as const).map((status) => (
-                <button
-                  key={status}
-                  type="button"
-                  onClick={() => handleStatusChange(status)}
-                  disabled={updatingStatus || campaign.status === status}
-                  className={`rounded-full border px-4 py-2 text-xs font-semibold transition ${
-                    campaign.status === status
-                      ? "border-foreground bg-foreground text-background"
-                      : "border-border text-muted hover:border-accent hover:text-accent-dark"
-                  } disabled:opacity-50`}
-                >
-                  {updatingStatus && campaign.status !== status ? "Updating..." : status}
-                </button>
-              ))}
+              {(
+                [
+                  ["pause", "Pause", campaign.status === "running" || campaign.status === "scheduled"],
+                  ["resume", "Resume", campaign.status === "paused"],
+                  ["cancel", "Cancel schedule", campaign.status === "scheduled"],
+                ] as const
+              )
+                .filter(([, , visible]) => visible)
+                .map(([action, label]) => (
+                  <button
+                    key={action}
+                    type="button"
+                    onClick={() => handleAction(action)}
+                    disabled={updatingStatus}
+                    className="rounded-full border border-border px-4 py-2 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark disabled:opacity-50"
+                  >
+                    {updatingStatus ? "Updating..." : label}
+                  </button>
+                ))}
+              <Link href={`/sends/campaigns/${campaign.id}`} className="rounded-full border border-border px-4 py-2 text-xs font-semibold text-muted transition hover:border-accent hover:text-accent-dark">
+                Content and schedule
+              </Link>
             </div>
           </div>
 
