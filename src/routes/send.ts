@@ -67,7 +67,16 @@ async function requireSendAuth(request: Request, response: Response, next: NextF
 
 sendRouter.use(requireSendAuth);
 
-sendRouter.post('/', async (request, response) => {
+// The send pipeline, shared by POST /v1/send and the campaign scheduler.
+export type SendRequest = Pick<Request, 'body' | 'tenant' | 'apiKey' | 'keyType'>;
+export type SendResponse = {
+  status(code: number): { json(body: unknown): unknown };
+  setHeader(name: string, value: string): unknown;
+};
+
+sendRouter.post('/', (request, response) => handleSend(request, response));
+
+export async function handleSend(request: SendRequest, response: SendResponse): Promise<void> {
   const parsed = sendSchema.safeParse(request.body);
 
   if (!parsed.success) {
@@ -101,10 +110,21 @@ sendRouter.post('/', async (request, response) => {
     }
 
     if (parsed.data.emailType === 'marketing') {
-      const { data: campaignContacts, error: campaignContactsError } = await supabaseAdmin
-        .from('campaign_contacts')
-        .select('email')
-        .eq('campaign_id', parsed.data.campaignId);
+      // With toEmails, only look those up (the scheduler's chunks); otherwise
+      // the whole campaign.
+      const campaignContactResults = directRecipients.length > 0
+        ? await Promise.all(
+            chunk(directRecipients).map((emails) =>
+              supabaseAdmin
+                .from('campaign_contacts')
+                .select('email')
+                .eq('campaign_id', parsed.data.campaignId as string)
+                .in('email', emails),
+            ),
+          )
+        : [await supabaseAdmin.from('campaign_contacts').select('email').eq('campaign_id', parsed.data.campaignId)];
+      const campaignContactsError = campaignContactResults.find((result) => result.error)?.error;
+      const campaignContacts = campaignContactResults.flatMap((result) => result.data ?? []);
 
       if (campaignContactsError && !env.AUTH_BYPASS) {
         response.status(500).json({ error: 'Failed to resolve campaign contacts' });
@@ -205,8 +225,15 @@ sendRouter.post('/', async (request, response) => {
       .map((contact) => normalizeEmail(contact.email));
   });
 
+  // With a campaign, toEmails (if given) picks a subset of its recipients;
+  // the scheduler uses this to send a campaign in chunks.
+  const directSet = new Set(directRecipients);
+  const campaignSubset = directRecipients.length > 0
+    ? campaignRecipients.filter((email) => directSet.has(email))
+    : campaignRecipients;
+
   const uniqueRecipients = parsed.data.campaignId && parsed.data.emailType === 'marketing'
-    ? campaignRecipients
+    ? campaignSubset
     : Array.from(new Set([...directRecipients, ...resolvedFromContacts, ...resolvedFromLists]));
 
   if (uniqueRecipients.length === 0) {
@@ -591,4 +618,4 @@ sendRouter.post('/', async (request, response) => {
     publishedJobs,
     failedJobs,
   });
-});
+}
