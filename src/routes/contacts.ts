@@ -14,11 +14,19 @@ const contactSchema = z.object({
   // Treat empty strings as missing — transform empty -> undefined then optional
   firstName: z.string().trim().max(120).transform((s) => (s === "" ? undefined : s)).optional(),
   lastName: z.string().trim().max(120).transform((s) => (s === "" ? undefined : s)).optional(),
+  // Custom fields for merge tags, e.g. { "company": "Acme", "plan": "Pro" }.
+  // When given, they replace the contact's existing custom fields.
+  attributes: z
+    .record(z.string().trim().regex(/^[a-zA-Z_]\w{0,49}$/, 'Field names use letters, digits and _'), z.union([z.string().max(1000), z.number(), z.boolean(), z.null()]))
+    .refine((v) => Object.keys(v).length <= 50, 'At most 50 custom fields')
+    .optional(),
 });
 
 const importSchema = z.object({
   contacts: z.array(contactSchema).min(1),
 });
+
+const CONTACT_COLUMNS = 'id, email, first_name, last_name, attributes, created_at, updated_at';
 
 contactsRouter.use(requireAuth, requireTenant);
 
@@ -27,7 +35,7 @@ contactsRouter.get('/', async (request, response) => {
 
   const { data, error } = await supabaseAdmin
     .from('contacts')
-    .select('id, email, first_name, last_name, created_at, updated_at')
+    .select(CONTACT_COLUMNS)
     .eq('tenant_id', tenantId as string)
     .order('created_at', { ascending: false });
 
@@ -63,13 +71,14 @@ contactsRouter.post('/', async (request, response) => {
         email,
         first_name: parsed.data.firstName && parsed.data.firstName.trim() ? parsed.data.firstName.trim() : null,
         last_name: parsed.data.lastName && parsed.data.lastName.trim() ? parsed.data.lastName.trim() : null,
+        ...(parsed.data.attributes ? { attributes: parsed.data.attributes } : {}),
         updated_at: new Date().toISOString(),
       },
       {
         onConflict: 'tenant_id,email',
       },
     )
-    .select('id, email, first_name, last_name, created_at, updated_at')
+    .select(CONTACT_COLUMNS)
     .single();
 
   if (error || !data) {
@@ -108,12 +117,20 @@ contactsRouter.post('/import', async (request, response) => {
     email: normalizeEmail(contact.email),
     first_name: contact.firstName && contact.firstName.trim() ? contact.firstName.trim() : null,
     last_name: contact.lastName && contact.lastName.trim() ? contact.lastName.trim() : null,
+    ...(contact.attributes ? { attributes: contact.attributes } : {}),
     updated_at: new Date().toISOString(),
   }));
 
-  const { error } = await supabaseAdmin.from('contacts').upsert(rows, {
-    onConflict: 'tenant_id,email',
-  });
+  // Upsert rows with and without custom fields separately, so importing a
+  // contact without fields does not wipe the fields it already has.
+  const withAttributes = rows.filter((row) => 'attributes' in row);
+  const withoutAttributes = rows.filter((row) => !('attributes' in row));
+  const results = await Promise.all(
+    [withAttributes, withoutAttributes]
+      .filter((batch) => batch.length > 0)
+      .map((batch) => supabaseAdmin.from('contacts').upsert(batch, { onConflict: 'tenant_id,email' })),
+  );
+  const error = results.find((result) => result.error)?.error;
 
   if (error) {
     if (env.AUTH_BYPASS) {
