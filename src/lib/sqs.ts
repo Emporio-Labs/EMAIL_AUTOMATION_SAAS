@@ -48,9 +48,9 @@ export function buildEmailJobMessage(input: Omit<EmailJobMessage, 'version'>): s
   return JSON.stringify(payload);
 }
 
-export async function publishEmailJobMessage(body: string): Promise<string | null> {
+export async function publishEmailJobMessage(body: string, queueUrl: string = env.SQS_QUEUE_URL): Promise<string | null> {
   const command = new SendMessageCommand({
-    QueueUrl: env.SQS_QUEUE_URL,
+    QueueUrl: queueUrl,
     MessageBody: body,
   });
 

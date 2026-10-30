@@ -9,6 +9,7 @@
 
 import { supabaseAdmin } from './lib/supabase';
 import { sesDeleteDomain, sesGetDomainStatus } from './lib/ses';
+import { checkPendingOtpSubdomains } from './lib/otp-domains';
 
 const POLL_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 // A domain nobody verifies within this window is released, so a tenant cannot
@@ -57,12 +58,17 @@ async function checkPendingDomains(): Promise<void> {
   }
 }
 
+async function checkAll(): Promise<void> {
+  await checkPendingDomains();
+  await checkPendingOtpSubdomains();
+}
+
 export function startDomainPoller(): void {
   // Run once immediately on startup
-  checkPendingDomains();
+  checkAll();
 
   // Then every 10 minutes
-  setInterval(checkPendingDomains, POLL_INTERVAL_MS);
+  setInterval(checkAll, POLL_INTERVAL_MS);
 
   console.log('[domain-poller] Started — polling every 10 minutes.');
 }
