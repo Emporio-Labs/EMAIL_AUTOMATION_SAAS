@@ -13,6 +13,7 @@ import { computeHtmlHash } from '../utils/hash';
 import { PLAN_LIMITS, resolvePlanLimit, resolvePlanBooleanLimit, PlanName } from '../config/plans';
 import { escapeHtml, injectTrackingPixel, rewriteLinks } from '../lib/tracker';
 import { tryConsume } from '../utils/rate-limiter';
+import { contactVariables, hasMergeTags, htmlToText, renderTemplate, type TemplateVariables } from '../lib/render-template';
 
 export const sendRouter = Router();
 
@@ -27,8 +28,13 @@ function chunk<T>(items: T[], size = IN_FILTER_CHUNK): T[][] {
 }
 
 const sendSchema = z.object({
-  subject: z.string().trim().min(1).max(200),
-  html: z.string().trim().min(1),
+  // Optional when templateId is given; they then override the template's own.
+  subject: z.string().trim().min(1).max(200).optional(),
+  html: z.string().trim().min(1).optional(),
+  text: z.string().trim().min(1).max(100_000).optional(),
+  templateId: z.string().uuid().optional(),
+  // Merge-tag values shared by every recipient; contact fields fill the rest.
+  variables: z.record(z.string(), z.unknown()).optional(),
   from: z.string().trim().email('"from" must be a valid email address using your verified domain'),
   toEmails: z.array(z.string().email()).optional(),
   contactIds: z.array(z.string().uuid()).optional(),
@@ -45,6 +51,9 @@ const sendSchema = z.object({
     return Boolean(val.campaignId && val.emailType === 'marketing');
   },
   { message: 'Provide recipients via toEmails/contactIds/listIds or marketing campaignId' },
+).refine(
+  (val) => Boolean(val.templateId || (val.subject && val.html)),
+  { message: 'Provide subject and html, or a templateId' },
 );
 
 function hasApiKeyHeader(request: Request): boolean {
@@ -89,6 +98,32 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
   const isSandbox = request.keyType === 'sandbox' || forceSandbox;
   const fromEmail = normalizeEmail(parsed.data.from);
   const directRecipients = (parsed.data.toEmails ?? []).map(normalizeEmail);
+
+  // ── Content: inline, or from a saved template ──────────────────────────────
+  let subjectSource = parsed.data.subject ?? '';
+  let htmlSource = parsed.data.html ?? '';
+  let textSource = parsed.data.text ?? null;
+  if (parsed.data.templateId) {
+    const { data: template, error: templateError } = await supabaseAdmin
+      .from('email_templates')
+      .select('subject, html, text')
+      .eq('id', parsed.data.templateId)
+      .eq('tenant_id', tenantId as string)
+      .maybeSingle();
+
+    if (templateError) {
+      response.status(500).json({ error: 'Failed to load template' });
+      return;
+    }
+    if (!template) {
+      response.status(404).json({ error: 'Template not found' });
+      return;
+    }
+    subjectSource = parsed.data.subject ?? template.subject;
+    htmlSource = parsed.data.html ?? template.html;
+    textSource = parsed.data.text ?? (parsed.data.html ? null : template.text);
+  }
+  const personalized = hasMergeTags(subjectSource) || hasMergeTags(htmlSource) || hasMergeTags(textSource);
 
   const plan = request.tenant?.plan as PlanName;
   const trialEndsAt = request.tenant?.trial_ends_at;
@@ -411,10 +446,35 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
   const trackOpens = resolvePlanBooleanLimit(request.tenant?.can_track_opens, planLimits.can_track_opens);
   const trackClicks = resolvePlanBooleanLimit(request.tenant?.can_track_clicks, planLimits.can_track_clicks);
 
+  // Contact fields for merge tags ({{first_name}}, custom attributes, ...).
+  const contactsByEmail = new Map<string, { email: string; first_name: string | null; last_name: string | null; attributes: Record<string, unknown> | null }>();
+  if (personalized && tenantId) {
+    const contactResults = await Promise.all(
+      chunk(sendableRecipients).map((emails) =>
+        supabaseAdmin
+          .from('contacts')
+          .select('email, first_name, last_name, attributes')
+          .eq('tenant_id', tenantId)
+          .in('email', emails),
+      ),
+    );
+    for (const result of contactResults) {
+      for (const row of result.data ?? []) contactsByEmail.set(normalizeEmail(row.email), row);
+    }
+  }
+
   const sentAt = isSandbox ? new Date().toISOString() : null;
   const jobRows = sendableRecipients.map((email) => {
     const jobId = randomUUID();
-    let html = parsed.data.html;
+    const variables: TemplateVariables = personalized
+      ? { ...contactVariables(contactsByEmail.get(email), email), ...(parsed.data.variables ?? {}) }
+      : {};
+    const subject = personalized ? renderTemplate(subjectSource, variables, 'text') : subjectSource;
+    let html = personalized ? renderTemplate(htmlSource, variables, 'html') : htmlSource;
+    // Plain-text part, so clients that block HTML (and spam filters) see content.
+    let text = textSource
+      ? (personalized ? renderTemplate(textSource, variables, 'text') : textSource)
+      : htmlToText(html);
 
     // 1. Inject unsubscribe footer (marketing only: receipts, bills and
     //    password resets must not offer an unsubscribe that blocks them).
@@ -422,6 +482,7 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
       const unsubToken = generateUnsubscribeToken(email, tenantId as string);
       const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
       const tenantName = escapeHtml(request.tenant?.name || 'our service');
+      text += `\n\n--\nYou are receiving this email from ${request.tenant?.name || 'our service'}. Unsubscribe: ${unsubUrl}`;
       const footerHtml = `<div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; font-size: 12px; color: #666; text-align: center;">You are receiving this email from ${tenantName}. If you no longer wish to receive these emails, you can <a href="${unsubUrl}" style="color: #007bff; text-decoration: underline;">unsubscribe here</a>.</div>`;
 
       const bodyIndex = html.toLowerCase().lastIndexOf('</body>');
@@ -450,9 +511,11 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
       campaign_id: parsed.data.campaignId ?? null,
       from_email: fromEmail,
       to_email: email,
-      subject: parsed.data.subject,
+      subject,
       html_hash: htmlHash,
+      template_id: parsed.data.templateId ?? null,
       _inMemoryHtml: html,
+      _inMemoryText: text,
       status: isSandbox ? 'delivered' : 'queued',
       sent_at: sentAt,
       email_type: parsed.data.emailType,
@@ -506,7 +569,7 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
   }
 
   // Remove the temporary _inMemoryHtml property before inserting into email_jobs
-  const dbJobRows = jobRows.map(({ _inMemoryHtml, ...row }) => row);
+  const dbJobRows = jobRows.map(({ _inMemoryHtml, _inMemoryText, ...row }) => row);
 
   const { data: insertedJobs, error: insertError } = await supabaseAdmin
     .from('email_jobs')
@@ -530,6 +593,7 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
         to_email: job.to_email,
         subject: job.subject,
         html: job._inMemoryHtml,
+        text: job._inMemoryText,
         email_type: job.email_type,
       }))
     : insertedJobs.map((job) => {
@@ -543,6 +607,7 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
           to_email: job.to_email,
           subject: job.subject,
           html: originalJob?._inMemoryHtml || '',
+          text: originalJob?._inMemoryText,
           email_type: job.email_type,
         };
       });
@@ -574,6 +639,7 @@ export async function handleSend(request: SendRequest, response: SendResponse): 
         to: job.to_email,
         subject: job.subject,
         html: job.html,
+        text: job.text,
         configurationSetName: env.SES_CONFIGURATION_SET,
         headers,
       }),

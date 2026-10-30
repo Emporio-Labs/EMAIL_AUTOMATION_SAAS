@@ -9,6 +9,7 @@ import { escapeHtml, injectTrackingPixel } from '../lib/tracker';
 import { normalizeEmail } from '../utils/normalize-email';
 import { computeHtmlHash } from '../utils/hash';
 import { tryConsume } from '../utils/rate-limiter';
+import { renderTemplate, type TemplateVariables } from '../lib/render-template';
 import { PLAN_LIMITS, resolvePlanBooleanLimit, resolvePlanLimit, type PlanName } from '../config/plans';
 
 // Transactional send API for external apps and dashboards.
@@ -37,8 +38,12 @@ const emailSchema = z
     cc: addressList.optional(),
     bcc: addressList.optional(),
     reply_to: addressList.optional(),
-    subject: z.string().trim().min(1).max(200),
+    // Optional with template_id, where they override the template's own.
+    subject: z.string().trim().min(1).max(200).optional(),
     html: z.string().trim().min(1).optional(),
+    template_id: z.string().uuid().optional(),
+    // Values for {{merge_tags}} in the subject, html and text.
+    variables: z.record(z.string(), z.unknown()).optional(),
     text: z.string().trim().min(1).optional(),
     attachments: z
       .array(
@@ -52,7 +57,8 @@ const emailSchema = z
     tags: z.record(z.string().max(50), z.string().max(200)).optional(),
     track_opens: z.boolean().default(true),
   })
-  .refine((v) => v.html || v.text, { message: 'Provide html or text', path: ['html'] })
+  .refine((v) => v.template_id || v.html || v.text, { message: 'Provide html or text, or a template_id', path: ['html'] })
+  .refine((v) => v.template_id || v.subject, { message: 'Provide a subject, or a template_id', path: ['subject'] })
   .refine((v) => !v.html || Buffer.byteLength(v.html, 'utf8') <= MAX_HTML_BYTES, {
     message: `html must be at most ${MAX_HTML_BYTES / 1024} KB. Link large content instead of inlining it.`,
     path: ['html'],
@@ -215,6 +221,30 @@ async function sendOne(ctx: TenantContext, raw: unknown, idempotencyKey: string 
     }
   }
 
+  // Content: inline, or from a saved template, with merge tags filled in.
+  let subjectSource = input.subject ?? '';
+  let htmlSource = input.html;
+  let textSource = input.text;
+  if (input.template_id) {
+    const { data: template, error: templateError } = await supabaseAdmin
+      .from('email_templates')
+      .select('subject, html, text')
+      .eq('id', input.template_id)
+      .eq('tenant_id', ctx.id)
+      .maybeSingle();
+    if (templateError) {
+      return { ok: false, status: 500, body: { error: 'Failed to load template' } };
+    }
+    if (!template) {
+      return { ok: false, status: 404, body: { error: 'Template not found' } };
+    }
+    subjectSource = input.subject ?? template.subject;
+    // Inline content replaces the template's as a whole, html and text together.
+    if (!input.html && !input.text) {
+      htmlSource = template.html;
+      textSource = template.text ?? undefined;
+    }
+  }
   const from = parseFrom(input.from, input.from_name);
   if (!from) {
     return { ok: false, status: 400, body: { error: '"from" must be an email address, optionally as "Name <email>"' } };
@@ -294,15 +324,23 @@ async function sendOne(ctx: TenantContext, raw: unknown, idempotencyKey: string 
     if (error) console.error('[emails] Failed to release quota:', error);
   };
 
+  // Merge tags are filled only for templates or when variables are passed, so
+  // literal braces in plain inline content are left alone.
+  const variables: TemplateVariables = { email: sendTo[0], ...(input.variables ?? {}) };
+  const merge = Boolean(input.template_id || input.variables);
+  const fill = (source: string | undefined, mode: 'html' | 'text') =>
+    source && merge ? renderTemplate(source, variables, mode) : source;
+  const subject = fill(subjectSource, 'text')!;
+
   const jobId = randomUUID();
-  let html = input.html;
+  let html = fill(htmlSource, 'html');
   if (html && input.attachments?.length) {
     html = insertBeforeBodyEnd(html, renderAttachmentCards(input.attachments));
   }
   if (html && input.track_opens && ctx.trackOpens) {
     html = injectTrackingPixel(html, jobId, env.BASE_URL);
   }
-  let text = input.text;
+  let text = fill(textSource, 'text');
   if (text && input.attachments?.length) {
     text += `\n\nAttachments:\n${input.attachments.map((a) => `- ${a.filename}: ${a.url}`).join('\n')}`;
   }
@@ -331,8 +369,9 @@ async function sendOne(ctx: TenantContext, raw: unknown, idempotencyKey: string 
       cc_emails: sendCc.length ? sendCc : null,
       bcc_emails: sendBcc.length ? sendBcc : null,
       reply_to: replyTo.length ? replyTo : null,
-      subject: input.subject,
+      subject,
       html_hash: htmlHash,
+      template_id: input.template_id ?? null,
       status: ctx.isSandbox ? 'delivered' : 'queued',
       sent_at: ctx.isSandbox ? now : null,
       email_type: 'transactional',
@@ -379,7 +418,7 @@ async function sendOne(ctx: TenantContext, raw: unknown, idempotencyKey: string 
     cc: sendCc,
     bcc: sendBcc,
     replyTo,
-    subject: input.subject,
+    subject,
     html: html ?? '',
     text,
     configurationSetName: env.SES_CONFIGURATION_SET,

@@ -183,6 +183,36 @@ All requests must include an `x-api-key` header representing your tenant's API k
 }
 ```
 
+### Templates and merge tags
+
+Save a template once (dashboard **Templates**, or `POST /v1/templates`), then
+send it with per-recipient values. Tags look like `{{first_name}}` or
+`{{ first_name | there }}` (with a fallback). Contact fields (`first_name`,
+`last_name`, `full_name`, `email`) and custom contact fields (`attributes`,
+for example `{{company}}` or `{{bill_url}}`) fill in automatically; `variables`
+passed with the send override them. Values are HTML-escaped, and a plain-text
+part is generated from the HTML when the template has none.
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| **GET / POST** | `/v1/templates` | List or create templates. |
+| **GET / PATCH / DELETE** | `/v1/templates/:id` | Read (with the merge tags used), update or delete. |
+| **POST** | `/v1/templates/:id/preview` | Render with `variables` and/or a `contactEmail`. |
+
+```json
+POST /v1/emails
+{
+  "from": "billing@yourdomain.com",
+  "to": "client@example.com",
+  "template_id": "6f1c…",
+  "variables": { "first_name": "Asha", "month": "October", "bill_url": "https://…/oct.pdf" }
+}
+```
+
+`POST /v1/send` takes `templateId` and `variables` the same way, and fills
+each recipient's contact fields. Campaigns copy a template's content in the
+dashboard, and their merge tags are filled per recipient when they send.
+
 ---
 
 ## 🗄️ Database Schema

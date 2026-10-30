@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
 import { Topbar } from "@/components/topbar";
+import { MERGE_TAG_HELP, TemplatePicker } from "@/components/template-picker";
 
 type CampaignItem = {
   id: string;
@@ -311,6 +312,7 @@ export default function CampaignDetailPage() {
 
                 <form className="mt-6 flex flex-col gap-5" onSubmit={handleSave}>
                   <fieldset disabled={!EDITABLE_STATUSES.includes(campaign.status) || sending} className="flex flex-col gap-5 disabled:opacity-70">
+                    <TemplatePicker token={token} onPick={(t) => setSendForm({ subject: t.subject, html: t.html })} />
                     <label className="flex flex-col gap-2 text-sm text-muted">
                       From address *
                       <select
@@ -347,6 +349,7 @@ export default function CampaignDetailPage() {
                         onChange={(e) => setSendForm({ ...sendForm, html: e.target.value })}
                         required
                       />
+                      <span className="text-xs">{MERGE_TAG_HELP}</span>
                     </label>
 
                     <div className="flex flex-wrap items-end gap-3">
