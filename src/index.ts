@@ -8,6 +8,8 @@ const app = createApp();
 app.listen(env.PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Express API listening on port ${env.PORT}`);
-  startDomainPoller();
-  startHtmlPurger();
+  if (env.RUN_BACKGROUND_JOBS) {
+    startDomainPoller();
+    startHtmlPurger();
+  }
 });

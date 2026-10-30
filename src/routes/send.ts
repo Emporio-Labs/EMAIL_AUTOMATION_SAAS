@@ -6,14 +6,25 @@ import { requireAuth } from '../middleware/require-auth';
 import { requireApiKey } from '../middleware/require-api-key';
 import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
-import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
+import { buildEmailJobMessage, publishEmailJobMessages } from '../lib/sqs';
 import { normalizeEmail } from '../utils/normalize-email';
 import { generateUnsubscribeToken } from '../utils/unsubscribe-token';
 import { computeHtmlHash } from '../utils/hash';
 import { PLAN_LIMITS, resolvePlanLimit, resolvePlanBooleanLimit, PlanName } from '../config/plans';
-import { injectTrackingPixel, rewriteLinks } from '../lib/tracker';
+import { escapeHtml, injectTrackingPixel, rewriteLinks } from '../lib/tracker';
+import { tryConsume } from '../utils/rate-limiter';
 
 export const sendRouter = Router();
+
+// PostgREST puts `.in()` filters in the URL; keep each list small enough that a
+// 1,000-recipient send does not hit URL length limits.
+const IN_FILTER_CHUNK = 150;
+
+function chunk<T>(items: T[], size = IN_FILTER_CHUNK): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
 
 const sendSchema = z.object({
   subject: z.string().trim().min(1).max(200),
@@ -106,12 +117,18 @@ sendRouter.post('/', async (request, response) => {
         return;
       }
 
-      const { data: subscribedContacts, error: subscribedContactsError } = await supabaseAdmin
-        .from('contacts')
-        .select('email')
-        .eq('tenant_id', tenantId as string)
-        .eq('is_subscribed', true)
-        .in('email', campaignEmails);
+      const subscribedResults = await Promise.all(
+        chunk(campaignEmails).map((emails) =>
+          supabaseAdmin
+            .from('contacts')
+            .select('email')
+            .eq('tenant_id', tenantId as string)
+            .eq('is_subscribed', true)
+            .in('email', emails),
+        ),
+      );
+      const subscribedContactsError = subscribedResults.find((result) => result.error)?.error;
+      const subscribedContacts = subscribedResults.flatMap((result) => result.data ?? []);
 
       if (subscribedContactsError && !env.AUTH_BYPASS) {
         response.status(500).json({ error: 'Failed to resolve subscribed campaign contacts' });
@@ -119,6 +136,26 @@ sendRouter.post('/', async (request, response) => {
       }
 
       campaignRecipients = Array.from(new Set((subscribedContacts ?? []).map((row) => normalizeEmail(row.email))));
+    }
+  }
+
+  // Lists must belong to this tenant; list_contacts has no tenant column of its own.
+  if (parsed.data.listIds && parsed.data.listIds.length > 0) {
+    const requestedListIds = Array.from(new Set(parsed.data.listIds));
+    const { data: ownedLists, error: ownedListsError } = await supabaseAdmin
+      .from('lists')
+      .select('id')
+      .eq('tenant_id', tenantId as string)
+      .in('id', requestedListIds);
+
+    if (ownedListsError) {
+      response.status(500).json({ error: 'Failed to resolve lists' });
+      return;
+    }
+
+    if ((ownedLists ?? []).length !== requestedListIds.length) {
+      response.status(404).json({ error: 'One or more lists were not found' });
+      return;
     }
   }
 
@@ -133,8 +170,9 @@ sendRouter.post('/', async (request, response) => {
     parsed.data.listIds && parsed.data.listIds.length > 0
       ? supabaseAdmin
           .from('list_contacts')
-          .select('contact_id, contacts!inner(id, email)')
+          .select('contact_id, contacts!inner(id, email, tenant_id, is_subscribed)')
           .in('list_id', parsed.data.listIds)
+          .eq('contacts.tenant_id', tenantId as string)
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -151,17 +189,20 @@ sendRouter.post('/', async (request, response) => {
   const resolvedFromContacts = (contactRowsResult.error ? [] : contactRowsResult.data ?? []).map((contact) =>
     normalizeEmail(contact.email),
   );
+  type ListContact = { email: string; is_subscribed?: boolean };
+  const isMarketing = parsed.data.emailType === 'marketing';
   const resolvedFromLists = (listRowsResult.error ? [] : listRowsResult.data ?? []).flatMap((row) => {
-    const contacts = row.contacts;
-    if (Array.isArray(contacts)) {
-      return contacts.map((contact: { email: string }) => normalizeEmail(contact.email));
-    }
+    const contacts = row.contacts as unknown;
+    const rows: ListContact[] = Array.isArray(contacts)
+      ? (contacts as ListContact[])
+      : contacts && typeof contacts === 'object' && 'email' in contacts
+        ? [contacts as ListContact]
+        : [];
 
-    if (contacts && typeof contacts === 'object' && 'email' in contacts) {
-      return [normalizeEmail((contacts as { email: string }).email)];
-    }
-
-    return [];
+    // Unsubscribed contacts still get transactional mail, never marketing.
+    return rows
+      .filter((contact) => !isMarketing || contact.is_subscribed !== false)
+      .map((contact) => normalizeEmail(contact.email));
   });
 
   const uniqueRecipients = parsed.data.campaignId && parsed.data.emailType === 'marketing'
@@ -190,13 +231,29 @@ sendRouter.post('/', async (request, response) => {
   // ── Suppression filter ────────────────────────────────────────────────────
   // Block any address that has previously bounced or been complained about.
   // We check for platform-wide suppressions (tenant_id IS NULL) or tenant-specific suppressions.
-  const { data: suppressedRows } = await supabaseAdmin
-    .from('suppressed')
-    .select('email')
-    .in('email', uniqueRecipients)
-    .or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
+  // Unsubscribes only block marketing; bounces and complaints block everything.
+  const blockingReasons = parsed.data.emailType === 'marketing'
+    ? ['bounce', 'complaint', 'unsubscribe']
+    : ['bounce', 'complaint'];
+  const suppressedResults = await Promise.all(
+    chunk(uniqueRecipients).map((emails) =>
+      supabaseAdmin
+        .from('suppressed')
+        .select('email')
+        .in('email', emails)
+        .in('reason', blockingReasons)
+        .or(`tenant_id.eq.${tenantId},tenant_id.is.null`),
+    ),
+  );
 
-  const suppressedSet = new Set((suppressedRows ?? []).map((r: { email: string }) => r.email));
+  if (suppressedResults.some((result) => result.error) && !env.AUTH_BYPASS) {
+    response.status(500).json({ error: 'Failed to check suppression list' });
+    return;
+  }
+
+  const suppressedSet = new Set(
+    suppressedResults.flatMap((result) => (result.data ?? []).map((r: { email: string }) => r.email)),
+  );
   const suppressedRecipients = uniqueRecipients.filter((e) => suppressedSet.has(e));
   const sendableRecipients = uniqueRecipients.filter((e) => !suppressedSet.has(e));
 
@@ -220,6 +277,22 @@ sendRouter.post('/', async (request, response) => {
       hint: `You have sent ${currentMonthlyCount} of ${monthlyLimit} emails. Sending this batch of ${emailsToSend} emails would exceed your limit. Please upgrade your plan or contact support.`,
     });
     return;
+  }
+
+  // ── Per-minute rate limit ──────────────────────────────────────────────────
+  // Applies to API-key sends. Dashboard sends (a person sending to a list or
+  // campaign) are bounded by max_recipients_per_send and the monthly quota
+  // instead, so a large list is not rejected outright by a per-minute cap.
+  const rateLimit = request.tenant?.rateLimit;
+  if (request.apiKey && rateLimit && rateLimit > 0 && !env.AUTH_BYPASS) {
+    if (!tryConsume(tenantId as string, emailsToSend, rateLimit)) {
+      response.setHeader('Retry-After', '60');
+      response.status(429).json({
+        error: 'Rate limit exceeded',
+        hint: `Your plan allows ${rateLimit} emails per minute. Try again shortly.`,
+      });
+      return;
+    }
   }
 
   // ── Domain verification guard ───────────────────────────────────────────────
@@ -316,18 +389,20 @@ sendRouter.post('/', async (request, response) => {
     const jobId = randomUUID();
     let html = parsed.data.html;
 
-    // 1. Inject unsubscribe footer
-    const unsubToken = generateUnsubscribeToken(email, tenantId as string);
-    const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${unsubToken}`;
-    const tenantName = request.tenant?.name || 'our service';
-    const footerHtml = `<div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; font-size: 12px; color: #666; text-align: center;">You are receiving this email from ${tenantName}. If you no longer wish to receive these emails, you can <a href="${unsubUrl}" style="color: #007bff; text-decoration: underline;">unsubscribe here</a>.</div>`;
+    // 1. Inject unsubscribe footer (marketing only: receipts, bills and
+    //    password resets must not offer an unsubscribe that blocks them).
+    if (parsed.data.emailType === 'marketing') {
+      const unsubToken = generateUnsubscribeToken(email, tenantId as string);
+      const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
+      const tenantName = escapeHtml(request.tenant?.name || 'our service');
+      const footerHtml = `<div style="margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; font-size: 12px; color: #666; text-align: center;">You are receiving this email from ${tenantName}. If you no longer wish to receive these emails, you can <a href="${unsubUrl}" style="color: #007bff; text-decoration: underline;">unsubscribe here</a>.</div>`;
 
-    // Inject footerHtml before </body> or at the end of html
-    const bodyIndex = html.toLowerCase().lastIndexOf('</body>');
-    if (bodyIndex === -1) {
-      html = html + footerHtml;
-    } else {
-      html = html.substring(0, bodyIndex) + footerHtml + html.substring(bodyIndex);
+      const bodyIndex = html.toLowerCase().lastIndexOf('</body>');
+      if (bodyIndex === -1) {
+        html = html + footerHtml;
+      } else {
+        html = html.substring(0, bodyIndex) + footerHtml + html.substring(bodyIndex);
+      }
     }
 
     // 2. Inject tracking pixel if trackOpens is true
@@ -337,7 +412,7 @@ sendRouter.post('/', async (request, response) => {
 
     // 3. Rewrite links for click tracking if trackClicks is true
     if (trackClicks) {
-      html = rewriteLinks(html, jobId, env.BASE_URL);
+      html = rewriteLinks(html, jobId, env.BASE_URL, env.INTERNAL_KEY);
     }
 
     const htmlHash = computeHtmlHash(html);
@@ -357,6 +432,35 @@ sendRouter.post('/', async (request, response) => {
     };
   });
 
+  // ── Reserve monthly quota atomically ───────────────────────────────────────
+  // The check above is a fast fail; this is the authoritative one.
+  if (!env.AUTH_BYPASS) {
+    const { data: reserved, error: reserveError } = await supabaseAdmin.rpc('reserve_tenant_email_quota', {
+      p_tenant_id: tenantId,
+      p_count: emailsToSend,
+    });
+
+    if (reserveError) {
+      console.error('[send] Failed to reserve quota:', reserveError);
+      response.status(500).json({ error: 'Failed to reserve monthly quota' });
+      return;
+    }
+
+    if (reserved === null) {
+      response.status(402).json({
+        error: 'Monthly email sending limit exceeded',
+        hint: `Sending this batch of ${emailsToSend} emails would exceed your limit of ${monthlyLimit}. Please upgrade your plan or contact support.`,
+      });
+      return;
+    }
+  }
+
+  const releaseQuota = async (count: number) => {
+    if (count <= 0 || env.AUTH_BYPASS) return;
+    const { error } = await supabaseAdmin.rpc('release_tenant_email_quota', { p_tenant_id: tenantId, p_count: count });
+    if (error) console.error('[send] Failed to release quota:', error);
+  };
+
   // Extract unique HTML hashes and their content to save database space
   const uniqueHtmls = Array.from(
     new Map(jobRows.map((row) => [row.html_hash, row._inMemoryHtml])).entries()
@@ -369,6 +473,7 @@ sendRouter.post('/', async (request, response) => {
 
   if (htmlInsertError && !env.AUTH_BYPASS) {
     console.error('[send] Failed to upsert email html contents:', htmlInsertError);
+    await releaseQuota(emailsToSend);
     response.status(500).json({ error: 'Failed to create email jobs (HTML storage error)' });
     return;
   }
@@ -382,24 +487,12 @@ sendRouter.post('/', async (request, response) => {
     .select('job_id, tenant_id, contact_id, list_id, from_email, to_email, subject, html_hash, email_type');
 
   if ((insertError || !insertedJobs) && !env.AUTH_BYPASS) {
+    await releaseQuota(emailsToSend);
     response.status(500).json({ error: 'Failed to create email jobs' });
     return;
   }
 
-  // Increment monthly email count for the tenant
-  const { error: incrementError } = await supabaseAdmin.rpc('increment_tenant_email_count', {
-    tenant_id: tenantId,
-    increment_by: emailsToSend,
-  });
-
-  if (incrementError) {
-    console.error('[send] Failed to increment email count via RPC, attempting fallback:', incrementError);
-    await supabaseAdmin
-      .from('tenants')
-      .update({ monthly_email_count: currentMonthlyCount + emailsToSend })
-      .eq('id', tenantId as string);
-  }
-
+  const jobRowsById = new Map(jobRows.map((row) => [row.job_id, row]));
   const jobsToPublish = insertError || !insertedJobs
     ? jobRows.map((job) => ({
         job_id: job.job_id,
@@ -413,7 +506,7 @@ sendRouter.post('/', async (request, response) => {
         email_type: job.email_type,
       }))
     : insertedJobs.map((job) => {
-        const originalJob = jobRows.find((rj) => rj.job_id === job.job_id);
+        const originalJob = jobRowsById.get(job.job_id);
         return {
           job_id: job.job_id,
           tenant_id: job.tenant_id,
@@ -436,50 +529,50 @@ sendRouter.post('/', async (request, response) => {
     return;
   }
 
-  const publishedJobs = [] as Array<{ jobId: string; sqsMessageId: string | null }>;
-  const failedJobs = [] as Array<{ jobId: string; reason: string }>;
-
-  for (const job of jobsToPublish) {
+  const messages = jobsToPublish.map((job) => {
     const headers: Array<{ name: string; value: string }> = [];
     if (job.email_type === 'marketing') {
       const unsubToken = generateUnsubscribeToken(job.to_email, job.tenant_id);
-      const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${unsubToken}`;
+      const unsubUrl = `${env.BASE_URL}/v1/unsubscribe?t=${encodeURIComponent(unsubToken)}`;
       headers.push({ name: 'List-Unsubscribe', value: `<${unsubUrl}>` });
       headers.push({ name: 'List-Unsubscribe-Post', value: 'List-Unsubscribe=One-Click' });
     }
 
-    const messageBody = buildEmailJobMessage({
+    return {
       jobId: job.job_id,
-      tenantId: job.tenant_id,
-      from: job.from_email,
-      to: job.to_email,
-      subject: job.subject,
-      html: job.html,
-      configurationSetName: env.SES_CONFIGURATION_SET,
-      headers,
-    });
+      body: buildEmailJobMessage({
+        jobId: job.job_id,
+        tenantId: job.tenant_id,
+        from: job.from_email,
+        to: job.to_email,
+        subject: job.subject,
+        html: job.html,
+        configurationSetName: env.SES_CONFIGURATION_SET,
+        headers,
+      }),
+    };
+  });
 
-    try {
-      const messageId = await publishEmailJobMessage(messageBody);
-      publishedJobs.push({ jobId: job.job_id, sqsMessageId: messageId });
+  const { published: publishedJobs, failed: failedJobs } = await publishEmailJobMessages(messages);
 
-      await supabaseAdmin
-        .from('email_jobs')
-        .update({ sqs_message_id: messageId })
-        .eq('job_id', job.job_id);
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Failed to publish to SQS';
-      failedJobs.push({ jobId: job.job_id, reason });
-
-      await supabaseAdmin
-        .from('email_jobs')
-        .update({
-          status: 'failed',
-          failed_at: new Date().toISOString(),
-          failure_reason: reason,
-        })
-        .eq('job_id', job.job_id);
+  if (failedJobs.length > 0) {
+    // Group by reason so this is a handful of updates, not one per job.
+    const byReason = new Map<string, string[]>();
+    for (const failed of failedJobs) {
+      byReason.set(failed.reason, [...(byReason.get(failed.reason) ?? []), failed.jobId]);
     }
+    const failedAt = new Date().toISOString();
+    await Promise.all(
+      Array.from(byReason.entries()).flatMap(([reason, jobIds]) =>
+        chunk(jobIds).map((ids) =>
+          supabaseAdmin
+            .from('email_jobs')
+            .update({ status: 'failed', failed_at: failedAt, failure_reason: reason })
+            .in('job_id', ids),
+        ),
+      ),
+    );
+    await releaseQuota(failedJobs.length);
   }
 
   if (publishedJobs.length === 0 && failedJobs.length > 0) {

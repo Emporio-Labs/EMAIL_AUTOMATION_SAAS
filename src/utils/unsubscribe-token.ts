@@ -1,9 +1,17 @@
 import crypto from 'crypto';
 import { env } from '../config/env';
 
-// Derives a 32-byte key from a secret string using a salt
+// Derives a 32-byte key from a secret string using a salt. scrypt is
+// deliberately slow (~40 ms), so cache it: without this a 300-recipient send
+// spent ~25 s just deriving the same key 600 times.
+const keyCache = new Map<string, Buffer>();
 function getEncryptionKey(secret: string): Buffer {
-  return crypto.scryptSync(secret, 'unsubscribe-salt', 32);
+  let key = keyCache.get(secret);
+  if (!key) {
+    key = crypto.scryptSync(secret, 'unsubscribe-salt', 32);
+    keyCache.set(secret, key);
+  }
+  return key;
 }
 
 export function generateUnsubscribeToken(email: string, tenantId: string): string {

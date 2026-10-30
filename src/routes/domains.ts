@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/require-auth';
 import { requireTenant } from '../middleware/require-tenant';
 import { supabaseAdmin } from '../lib/supabase';
-import { sesRegisterDomain, sesGetDomainStatus, buildFullDnsRecords } from '../lib/ses';
+import { sesRegisterDomain, sesGetDomainStatus, sesDeleteDomain, isSesAlreadyExists, buildFullDnsRecords } from '../lib/ses';
 import { PLAN_LIMITS, resolvePlanLimit, PlanName } from '../config/plans';
 
 export const domainsRouter = Router();
@@ -111,6 +111,13 @@ domainsRouter.post('/', async (request, response) => {
   try {
     dkimTokens = await sesRegisterDomain(domain);
   } catch (err) {
+    if (isSesAlreadyExists(err)) {
+      response.status(409).json({
+        error: `"${domain}" is already registered by another SwayamMail account.`,
+        hint: 'If you own this domain, contact support to have it released. Unverified domains are released automatically after 72 hours.',
+      });
+      return;
+    }
     console.error('[domains] SES register error:', err);
     response.status(502).json({
       error: 'Failed to register domain with SES',
@@ -127,6 +134,8 @@ domainsRouter.post('/', async (request, response) => {
     .single();
 
   if (error) {
+    // Don't leave an orphaned SES identity that would block the domain.
+    await sesDeleteDomain(domain).catch((cleanupErr) => console.error('[domains] SES cleanup failed:', cleanupErr));
     if (error.code === '23505') {
       response.status(409).json({ error: 'Domain already registered for this tenant' });
       return;
@@ -222,12 +231,22 @@ domainsRouter.get('/:id/verify', async (request, response) => {
 domainsRouter.delete('/:id', async (request, response) => {
   const tenantId = request.tenant!.id;
 
-  const { error } = await supabaseAdmin
+  const { data: deleted, error } = await supabaseAdmin
     .from('domains')
     .delete()
     .eq('id', request.params.id)
-    .eq('tenant_id', tenantId);
+    .eq('tenant_id', tenantId)
+    .select('domain')
+    .maybeSingle();
 
   if (error) { response.status(500).json({ error: 'Failed to delete domain' }); return; }
+
+  // Release the SES identity so the domain can be added again (by anyone).
+  if (deleted?.domain) {
+    await sesDeleteDomain(deleted.domain).catch((err) =>
+      console.error('[domains] Failed to delete SES identity for', deleted.domain, err),
+    );
+  }
+
   response.status(204).send();
 });

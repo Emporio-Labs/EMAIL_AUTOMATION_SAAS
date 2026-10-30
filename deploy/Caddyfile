@@ -1,0 +1,9 @@
+# Caddy gets and renews the HTTPS certificate automatically once the
+# domain's A record points at this server.
+{$API_DOMAIN} {
+	encode gzip
+	# Internal routes are for the worker (over the Docker network) and SNS only.
+	@internal_job_status path /internal/job-status*
+	respond @internal_job_status 404
+	reverse_proxy api:3000
+}

@@ -1,3 +1,5 @@
+import crypto from 'crypto';
+
 export function toBase64Url(str: string): string {
   return Buffer.from(str)
     .toString('base64')
@@ -23,7 +25,19 @@ export function injectTrackingPixel(html: string, jobId: string, baseUrl: string
   return html.substring(0, bodyIndex) + pixel + html.substring(bodyIndex);
 }
 
-export function rewriteLinks(html: string, jobId: string, baseUrl: string): string {
+// Click links carry an HMAC of (jobId, url) so /t/c cannot be used as an open
+// redirect to arbitrary sites.
+export function signClickUrl(jobId: string, url: string, secret: string): string {
+  return crypto.createHmac('sha256', secret).update(`${jobId}\n${url}`).digest('base64url').slice(0, 22);
+}
+
+export function verifyClickUrl(jobId: string, url: string, signature: string, secret: string): boolean {
+  const expected = Buffer.from(signClickUrl(jobId, url, secret));
+  const given = Buffer.from(signature);
+  return expected.length === given.length && crypto.timingSafeEqual(expected, given);
+}
+
+export function rewriteLinks(html: string, jobId: string, baseUrl: string, secret: string): string {
   return html.replace(/<a\b([^>]*)>/gi, (tagMatch, attributes) => {
     const hrefRegex = /href=(["'])(.*?)\1/i;
     const hrefMatch = attributes.match(hrefRegex);
@@ -34,13 +48,29 @@ export function rewriteLinks(html: string, jobId: string, baseUrl: string): stri
     const originalUrl = hrefMatch[2];
     
     const lowerUrl = originalUrl.toLowerCase();
+    if (!/^https?:\/\//.test(lowerUrl)) {
+      return tagMatch;
+    }
     if (lowerUrl.startsWith('mailto:') || lowerUrl.includes('/unsubscribe') || lowerUrl.includes('/unsub')) {
       return tagMatch;
     }
 
-    const encoded = toBase64Url(originalUrl);
-    const trackingUrl = `${baseUrl}/t/c/${jobId}/${encoded}`;
+    // hrefs are HTML-encoded; redirect to the real URL.
+    const targetUrl = originalUrl.replace(/&amp;/g, '&');
+    const encoded = toBase64Url(targetUrl);
+    const signature = signClickUrl(jobId, targetUrl, secret);
+    const trackingUrl = `${baseUrl}/t/c/${jobId}/${encoded}/${signature}`;
     const newAttributes = attributes.replace(hrefRegex, `href=${quote}${trackingUrl}${quote}`);
     return `<a${newAttributes}>`;
   });
+}
+
+
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

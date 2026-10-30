@@ -8,14 +8,17 @@
  */
 
 import { supabaseAdmin } from './lib/supabase';
-import { sesGetDomainStatus } from './lib/ses';
+import { sesDeleteDomain, sesGetDomainStatus } from './lib/ses';
 
 const POLL_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+// A domain nobody verifies within this window is released, so a tenant cannot
+// squat a domain they don't control and block its real owner.
+const UNVERIFIED_TTL_MS = 72 * 60 * 60 * 1000;
 
 async function checkPendingDomains(): Promise<void> {
   const { data: pending, error } = await supabaseAdmin
     .from('domains')
-    .select('id, domain, tenant_id')
+    .select('id, domain, tenant_id, created_at')
     .eq('verified', false);
 
   if (error) {
@@ -42,6 +45,10 @@ async function checkPendingDomains(): Promise<void> {
         } else {
           console.log(`[domain-poller] ✅ Domain verified: ${row.domain} (tenant ${row.tenant_id})`);
         }
+      } else if (Date.now() - new Date(row.created_at).getTime() > UNVERIFIED_TTL_MS) {
+        await sesDeleteDomain(row.domain);
+        await supabaseAdmin.from('domains').delete().eq('id', row.id).eq('verified', false);
+        console.log(`[domain-poller] Released unverified domain after 72h: ${row.domain} (tenant ${row.tenant_id})`);
       }
     } catch (err) {
       // Don't crash the loop — SES might be temporarily unreachable

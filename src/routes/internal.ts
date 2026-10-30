@@ -58,10 +58,13 @@ internalRouter.post('/job-status', async (request, response) => {
   }
 
   // ── Persist ───────────────────────────────────────────────────────────────
+  // Only move jobs forward from queued; a late callback must not overwrite a
+  // bounce or complaint that SNS already recorded.
   const { error } = await supabaseAdmin
     .from('email_jobs')
     .update(updatePayload)
-    .eq('job_id', jobId);
+    .eq('job_id', jobId)
+    .eq('status', 'queued');
 
   if (error) {
     console.error('[internal/job-status] update error:', error);
@@ -70,6 +73,40 @@ internalRouter.post('/job-status', async (request, response) => {
   }
 
   response.status(200).json({ ok: true });
+});
+
+// GET /internal/job-status/:jobId — lets the worker skip a job that was already
+// sent when SQS redelivers a message (SQS is at-least-once).
+internalRouter.get('/job-status/:jobId', async (request, response) => {
+  const key = request.headers['x-internal-key'];
+  if (!key || key !== env.INTERNAL_KEY) {
+    response.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const parsedId = z.string().uuid().safeParse(request.params.jobId);
+  if (!parsedId.success) {
+    response.status(400).json({ error: 'Invalid job id' });
+    return;
+  }
+
+  const { data, error } = await supabaseAdmin
+    .from('email_jobs')
+    .select('job_id, status')
+    .eq('job_id', parsedId.data)
+    .maybeSingle();
+
+  if (error) {
+    response.status(500).json({ error: 'Failed to load job' });
+    return;
+  }
+
+  if (!data) {
+    response.status(404).json({ error: 'Job not found' });
+    return;
+  }
+
+  response.json({ job_id: data.job_id, status: data.status });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -157,11 +194,17 @@ async function resolveJobAndTenant(
     return { jobId, tenantId };
   }
 
-  // Fallback to DB lookup
-  const { data: matchedJob } = await supabaseAdmin
+  // Fallback for mail sent before the worker tagged messages: match on
+  // recipient and sender, so another tenant's job is not picked by mistake.
+  const source = typeof mail?.source === 'string' ? (mail.source as string).toLowerCase() : null;
+  let fallbackQuery = supabaseAdmin
     .from('email_jobs')
     .select('job_id, tenant_id')
-    .eq('to_email', recipientEmail)
+    .eq('to_email', recipientEmail.toLowerCase());
+  if (source) {
+    fallbackQuery = fallbackQuery.eq('from_email', source);
+  }
+  const { data: matchedJob } = await fallbackQuery
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -238,7 +281,9 @@ internalRouter.post('/sns', async (request, response) => {
         }
 
         const sesEvent = JSON.parse(messageStr) as Record<string, unknown>;
-        const notificationType = sesEvent.notificationType as string | undefined;
+        // SES identity notifications use `notificationType`; configuration-set
+        // event publishing (which carries our job_id / tenant_id tags) uses `eventType`.
+        const notificationType = (sesEvent.notificationType ?? sesEvent.eventType) as string | undefined;
 
         console.log('[SNS] SES notification type:', notificationType);
 
@@ -259,12 +304,15 @@ internalRouter.post('/sns', async (request, response) => {
               // tenant_id is NULL = platform-level suppression (affects all tenants).
               // For per-tenant suppression, pass tenant_id as an SES message tag
               // in the Go worker and read it from sesEvent.mail.tags here.
-              const { error } = await supabaseAdmin
-                .from('suppressed')
-                .insert(emails.map((email) => ({ tenant_id: null, email, reason: 'bounce' })));
+              // One insert per address: a single duplicate would otherwise fail the batch.
+              for (const email of emails) {
+                const { error } = await supabaseAdmin
+                  .from('suppressed')
+                  .insert({ tenant_id: null, email: email.toLowerCase(), reason: 'bounce' });
 
-              if (error && error.code !== '23505') {
-                console.error('[SNS] Failed to insert bounce suppressions:', error);
+                if (error && error.code !== '23505') {
+                  console.error('[SNS] Failed to insert bounce suppression:', error);
+                }
               }
             } else {
               console.log(`[SNS] Soft/transient bounce (${bounceType}) — not suppressing`);
@@ -274,14 +322,22 @@ internalRouter.post('/sns', async (request, response) => {
             for (const email of emails) {
               const resolved = await resolveJobAndTenant(email, sesEvent);
               if (resolved) {
-                await supabaseAdmin
-                  .from('email_job_events')
-                  .insert({
-                    job_id: resolved.jobId,
-                    tenant_id: resolved.tenantId,
-                    event_type: 'bounced',
-                    metadata: { bounceType, email }
-                  });
+                await Promise.all([
+                  supabaseAdmin
+                    .from('email_job_events')
+                    .insert({
+                      job_id: resolved.jobId,
+                      tenant_id: resolved.tenantId,
+                      event_type: 'bounced',
+                      metadata: { bounceType, email }
+                    }),
+                  bounceType === 'permanent'
+                    ? supabaseAdmin
+                        .from('email_jobs')
+                        .update({ status: 'bounced', bounced_at: new Date().toISOString() })
+                        .eq('job_id', resolved.jobId)
+                    : Promise.resolve(),
+                ]);
               }
             }
           }
@@ -300,26 +356,35 @@ internalRouter.post('/sns', async (request, response) => {
 
             console.log('[SNS] Complaint — suppressing:', emails);
 
-            const { error } = await supabaseAdmin
-              .from('suppressed')
-              .insert(emails.map((email) => ({ tenant_id: null, email, reason: 'complaint' })));
+            // One insert per address: a single duplicate would otherwise fail the batch.
+            for (const email of emails) {
+              const { error } = await supabaseAdmin
+                .from('suppressed')
+                .insert({ tenant_id: null, email: email.toLowerCase(), reason: 'complaint' });
 
-            if (error && error.code !== '23505') {
-              console.error('[SNS] Failed to insert complaint suppressions:', error);
+              if (error && error.code !== '23505') {
+                console.error('[SNS] Failed to insert complaint suppression:', error);
+              }
             }
 
             // Log event in email_job_events
             for (const email of emails) {
               const resolved = await resolveJobAndTenant(email, sesEvent);
               if (resolved) {
-                await supabaseAdmin
-                  .from('email_job_events')
-                  .insert({
-                    job_id: resolved.jobId,
-                    tenant_id: resolved.tenantId,
-                    event_type: 'complained',
-                    metadata: { complaintFeedbackType, email }
-                  });
+                await Promise.all([
+                  supabaseAdmin
+                    .from('email_job_events')
+                    .insert({
+                      job_id: resolved.jobId,
+                      tenant_id: resolved.tenantId,
+                      event_type: 'complained',
+                      metadata: { complaintFeedbackType, email }
+                    }),
+                  supabaseAdmin
+                    .from('email_jobs')
+                    .update({ status: 'complained', complained_at: new Date().toISOString() })
+                    .eq('job_id', resolved.jobId),
+                ]);
               }
             }
           }
@@ -338,8 +403,9 @@ internalRouter.post('/sns', async (request, response) => {
                 await Promise.all([
                   supabaseAdmin
                     .from('email_jobs')
-                    .update({ status: 'delivered', delivered_at: now, sent_at: now })
-                    .eq('job_id', resolved.jobId),
+                    .update({ status: 'delivered', delivered_at: now })
+                    .eq('job_id', resolved.jobId)
+                    .in('status', ['queued', 'delivered']),
                   supabaseAdmin
                     .from('email_job_events')
                     .insert({
