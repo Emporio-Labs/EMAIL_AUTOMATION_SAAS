@@ -16,6 +16,13 @@ export type EmailJobMessage = {
   html: string;
   configurationSetName: string;
   headers?: EmailHeader[];
+  // Optional fields used by the transactional send API (/v1/emails).
+  fromName?: string;
+  toList?: string[];
+  cc?: string[];
+  bcc?: string[];
+  replyTo?: string[];
+  text?: string;
 };
 
 const client = new SQSClient({
@@ -30,6 +37,12 @@ export function buildEmailJobMessage(input: Omit<EmailJobMessage, 'version'>): s
     tenant_id: input.tenantId,
     configuration_set_name: input.configurationSetName,
     headers: input.headers,
+    from_name: input.fromName,
+    to_list: input.toList,
+    cc: input.cc,
+    bcc: input.bcc,
+    reply_to: input.replyTo,
+    body: input.text,
   };
 
   return JSON.stringify(payload);

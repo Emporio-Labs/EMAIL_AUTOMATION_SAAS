@@ -14,6 +14,10 @@ const navGroups = [
     items: [
       { label: "API keys", href: "#api-keys" },
       { label: "Send emails", href: "#send-api" },
+  { label: "Transactional API", href: "#transactional-api" },
+  { label: "Webhooks", href: "#webhooks" },
+      { label: "Transactional API", href: "#transactional-api" },
+      { label: "Webhooks", href: "#webhooks" },
       { label: "Delivery status", href: "#delivery-status" },
       { label: "List sends", href: "#list-sends" },
       { label: "Sandbox behavior", href: "#sandbox" },
@@ -257,6 +261,105 @@ export default function DocsPage() {
                 </pre>
               </div>
             </div>
+          </section>
+
+          <section id="transactional-api" className="scroll-mt-28 rounded-3xl border border-border bg-surface px-6 py-7 card-shadow">
+            <h2 className="font-display text-2xl text-foreground">Transactional email API</h2>
+            <p className="mt-2 text-sm text-muted">
+              For reports, invoices and other one-to-one mail sent from your own app or dashboard. You send ready-made HTML;
+              no unsubscribe footer is added and links are not rewritten. Opens are tracked if your plan includes it
+              (set <span className="font-mono text-xs">track_opens: false</span> to skip). Files are sent as links and shown
+              as attachment cards at the bottom of the email. Send an <span className="font-mono text-xs">Idempotency-Key</span>
+              header so a retried request never sends twice.
+            </p>
+            <pre className="mt-4 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-4 text-xs text-[#e6f7ef]">
+{`POST /v1/emails
+x-api-key: sk_prod_...
+Idempotency-Key: report-acme-2026-10
+
+{
+  "from": "Agency Reports <reports@yourdomain.in>",
+  "to": ["client@acme.com"],
+  "cc": ["pm@yourdomain.in"],
+  "reply_to": "pm@yourdomain.in",
+  "subject": "Your October report",
+  "html": "<h1>October at a glance</h1>...",
+  "text": "October at a glance...",
+  "attachments": [
+    { "filename": "Invoice-Oct.pdf", "url": "https://files.yourdomain.in/inv-oct.pdf" }
+  ],
+  "tags": { "client": "acme", "kind": "monthly-report" }
+}`}
+            </pre>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div className="rounded-2xl border border-border bg-surface-muted px-4 py-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted">Response (202)</p>
+                <pre className="mt-3 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-3 text-xs text-[#e6f7ef]">
+{`{
+  "id": "f7d1...",
+  "status": "queued",
+  "to": ["client@acme.com"],
+  "subject": "Your October report",
+  "tags": { "client": "acme" }
+}`}
+                </pre>
+              </div>
+              <div className="rounded-2xl border border-border bg-surface-muted px-4 py-4">
+                <p className="text-xs uppercase tracking-[0.2em] text-muted">Other endpoints</p>
+                <pre className="mt-3 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-3 text-xs text-[#e6f7ef]">
+{`POST /v1/emails/batch
+{ "emails": [ {...}, {...} ] }   // up to 100
+
+GET /v1/emails/:id
+// status, timestamps and event history`}
+                </pre>
+              </div>
+            </div>
+            <p className="mt-4 text-sm text-muted">
+              Limits: 50 recipients across to/cc/bcc, 200 KB of HTML, 10 attachment links, 10 tags. Reusing an
+              Idempotency-Key with the same body returns the original email (HTTP 200); with a different body it returns 409.
+              In a batch, item <span className="font-mono text-xs">i</span> uses key <span className="font-mono text-xs">&lt;key&gt;:i</span>.
+            </p>
+          </section>
+
+          <section id="webhooks" className="scroll-mt-28 rounded-3xl border border-border bg-surface px-6 py-7 card-shadow">
+            <h2 className="font-display text-2xl text-foreground">Webhooks</h2>
+            <p className="mt-2 text-sm text-muted">
+              Set one URL per account under Webhooks in the dashboard. Events: <span className="font-mono text-xs">email.sent</span>,
+              <span className="font-mono text-xs"> email.delivered</span>, <span className="font-mono text-xs">email.bounced</span>,
+              <span className="font-mono text-xs"> email.complained</span>, <span className="font-mono text-xs">email.opened</span>,
+              <span className="font-mono text-xs"> email.clicked</span>, <span className="font-mono text-xs">email.failed</span>.
+              Respond with any 2xx within 10 seconds. Other responses are retried after 1 min, 5 min, 30 min, 2 h, 6 h and 12 h.
+            </p>
+            <pre className="mt-4 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-4 text-xs text-[#e6f7ef]">
+{`POST https://your-app.com/webhooks/swayam
+Swayam-Event: email.delivered
+Swayam-Delivery-Id: 0b6e...
+Swayam-Signature: t=1761815000,v1=5f2c...
+
+{
+  "id": "0b6e...",
+  "type": "email.delivered",
+  "created_at": "2026-10-30T09:30:00Z",
+  "data": {
+    "email_id": "f7d1...",
+    "from": "reports@yourdomain.in",
+    "to": ["client@acme.com"],
+    "subject": "Your October report",
+    "email_type": "transactional",
+    "tags": { "client": "acme" },
+    "details": { "email": "client@acme.com" }
+  }
+}`}
+            </pre>
+            <p className="mt-4 text-sm text-muted">Verify the signature before trusting a request (Node.js):</p>
+            <pre className="mt-2 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-4 text-xs text-[#e6f7ef]">
+{`const [t, v1] = header.split(",").map((p) => p.split("=")[1]);
+const expected = crypto.createHmac("sha256", WEBHOOK_SECRET)
+  .update(\`\${t}.\${rawBody}\`).digest("hex");
+const fresh = Math.abs(Date.now() / 1000 - Number(t)) < 300;
+const valid = fresh && crypto.timingSafeEqual(Buffer.from(v1), Buffer.from(expected));`}
+            </pre>
           </section>
 
           <section id="delivery-status" className="scroll-mt-28 rounded-3xl border border-border bg-surface px-6 py-7 card-shadow">
