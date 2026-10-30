@@ -1,15 +1,18 @@
 import { Router } from 'express';
 import { supabaseAdmin } from '../lib/supabase';
-import { fromBase64Url } from '../lib/tracker';
+import { env } from '../config/env';
+import { fromBase64Url, verifyClickUrl } from '../lib/tracker';
 
 export const trackingRouter = Router();
 
 const GIF_BASE64 = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const GIF_BUFFER = Buffer.from(GIF_BASE64, 'base64');
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // GET /t/o/:jobId — Open tracking pixel
 trackingRouter.get('/o/:jobId', async (request, response) => {
   const jobId = request.params.jobId;
+  const validJobId = UUID_PATTERN.test(jobId);
 
   // Render transparent pixel response immediately to keep email client happy
   response.writeHead(200, {
@@ -18,6 +21,8 @@ trackingRouter.get('/o/:jobId', async (request, response) => {
     'Cache-Control': 'no-store, no-cache, must-revalidate, private',
   });
   response.end(GIF_BUFFER);
+
+  if (!validJobId) return;
 
   // Perform DB actions asynchronously after response ends
   try {
@@ -59,9 +64,12 @@ trackingRouter.get('/o/:jobId', async (request, response) => {
   }
 });
 
-// GET /t/c/:jobId/:encodedUrl — Link click tracking redirector
-trackingRouter.get('/c/:jobId/:encodedUrl', async (request, response) => {
-  const { jobId, encodedUrl } = request.params;
+// GET /t/c/:jobId/:encodedUrl/:signature — Link click tracking redirector.
+// Links sent before signing was added have no signature; those still redirect,
+// but only when the job exists, so random URLs cannot be bounced through us.
+trackingRouter.get(['/c/:jobId/:encodedUrl', '/c/:jobId/:encodedUrl/:signature'], async (request, response) => {
+  const { jobId, encodedUrl } = request.params as { jobId: string; encodedUrl: string };
+  const signature = (request.params as { signature?: string }).signature;
   let decodedUrl = '';
 
   try {
@@ -71,6 +79,18 @@ trackingRouter.get('/c/:jobId/:encodedUrl', async (request, response) => {
     response.status(400).send('Invalid tracking URL');
     return;
   }
+
+  if (!UUID_PATTERN.test(jobId) || !/^https?:\/\//i.test(decodedUrl)) {
+    response.status(400).send('Invalid tracking URL');
+    return;
+  }
+
+  if (signature !== undefined && !verifyClickUrl(jobId, decodedUrl, signature, env.INTERNAL_KEY)) {
+    response.status(400).send('Invalid tracking URL');
+    return;
+  }
+
+  let jobFound = false;
 
   // Process tracking details
   try {
@@ -83,6 +103,7 @@ trackingRouter.get('/c/:jobId/:encodedUrl', async (request, response) => {
     if (error || !job) {
       console.warn('[tracking/click] Job not found or lookup error:', jobId, error);
     } else {
+      jobFound = true;
       const now = new Date().toISOString();
       const updatePayload: Record<string, any> = {
         click_count: (job.click_count || 0) + 1,
@@ -113,6 +134,10 @@ trackingRouter.get('/c/:jobId/:encodedUrl', async (request, response) => {
     console.error('[tracking/click] Error tracking click:', err);
   }
 
-  // Always redirect to the destination URL
+  if (signature === undefined && !jobFound) {
+    response.status(404).send('Link not found');
+    return;
+  }
+
   response.redirect(302, decodedUrl);
 });

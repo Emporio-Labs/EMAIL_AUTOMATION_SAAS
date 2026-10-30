@@ -20,6 +20,12 @@ const envSchema = z.object({
   PLATFORM_FROM_EMAIL: z.string().email(),
   PLATFORM_FROM_NAME: z.string().min(1),
   BASE_URL: z.string().url(),
+  // Domain poller and HTML purge. Leave on for a long-running server (EC2);
+  // serverless deployments never start them anyway.
+  RUN_BACKGROUND_JOBS: z.string().transform((v) => v !== 'false').default('true'),
+}).refine((value) => !(value.AUTH_BYPASS && value.NODE_ENV === 'production'), {
+  message: 'AUTH_BYPASS must not be enabled when NODE_ENV=production',
+  path: ['AUTH_BYPASS'],
 });
 
 export const env = envSchema.parse(process.env);

@@ -54,7 +54,7 @@ Client / Tenant Application
 │  - Long-polls SQS queue & parses payloads              │
 │  - Dispatches email concurrently via AWS SES v2 API    │
 │  - Updates job sending status in Supabase Postgres     │
-│  - Requeues failed jobs / moves to DLQ after 3 retries  │
+│  - Retries throttled sends, DLQ after MAX_RECEIVES (5)  │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -131,6 +131,14 @@ npm install
 npm run dev
 ```
 The Dashboard will be running on `http://localhost:3001` (or next available port).
+
+---
+
+## 🚀 Deployment
+
+Production runs the API and the Go worker in Docker on one EC2 host behind Caddy, with the dashboard on Vercel. See [DEPLOY.md](DEPLOY.md).
+
+Tests: `npm test` (unit) and `scripts/local/e2e.mjs` (20 end-to-end checks against a local stack).
 
 ---
 
@@ -216,4 +224,4 @@ SwayamMail uses the following schema in Supabase:
 ## 📄 License & Team
 
 - **Founder**: Sagun Varma (Yugaas)
-- **License**: Distributed under the [ISC License](file:///c:/Users/Yeshwanth/Yugaas/github_clones/EMAIL_AUTOMATION_SAAS/LICENSE).
+- **License**: Distributed under the [ISC License](file:///c:/Users/Yeshwanth/Yugaas/github_clones/EMAIL_AUTOMATION_SAAS/LICENSE).

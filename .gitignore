@@ -5,3 +5,6 @@ dist
 .vercel
 .env*.local
 .txt
+# Real deploy env files
+deploy/api.env
+deploy/worker.env

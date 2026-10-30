@@ -21,6 +21,9 @@ import { trackingRouter } from './routes/tracking';
 export function createApp() {
   const app = express();
 
+  // Behind Caddy/nginx on EC2: use X-Forwarded-For for request.ip.
+  app.set('trust proxy', 1);
+
   app.use(helmet());
   app.use(cors());
   // Parse JSON routes normally, then accept raw text only for SNS webhooks.

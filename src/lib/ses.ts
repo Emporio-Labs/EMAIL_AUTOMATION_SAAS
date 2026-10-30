@@ -13,6 +13,7 @@
 import {
   SESv2Client,
   CreateEmailIdentityCommand,
+  DeleteEmailIdentityCommand,
   GetEmailIdentityCommand,
 } from '@aws-sdk/client-sesv2';
 import { awsCredentials } from '../config/aws';
@@ -46,6 +47,23 @@ export async function sesRegisterDomain(domain: string): Promise<string[]> {
     throw new Error('SES did not return DKIM tokens for this domain.');
   }
   return tokens;
+}
+
+// ── Remove a domain identity from SES ─────────────────────────────────────────
+// SES identities are account-wide, so a domain left registered blocks every
+// other tenant from adding it. Missing identities are not an error.
+
+export async function sesDeleteDomain(domain: string): Promise<void> {
+  try {
+    await makeSesClient().send(new DeleteEmailIdentityCommand({ EmailIdentity: domain }));
+  } catch (err) {
+    if ((err as { name?: string }).name === 'NotFoundException') return;
+    throw err;
+  }
+}
+
+export function isSesAlreadyExists(err: unknown): boolean {
+  return (err as { name?: string })?.name === 'AlreadyExistsException';
 }
 
 // ── Check live verification status ────────────────────────────────────────────

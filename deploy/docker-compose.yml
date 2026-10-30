@@ -1,0 +1,38 @@
+# Runs the API, the Go worker and Caddy (HTTPS) on one EC2 host.
+# Expects both repos checked out side by side:
+#   ~/swayamail/EMAIL_AUTOMATION_SAAS   (this repo)
+#   ~/swayamail/GO_EMAIL_WORKER
+# Usage (from this folder): docker compose up -d --build
+services:
+  api:
+    build: ..
+    env_file: ./api.env
+    restart: unless-stopped
+    mem_limit: 512m
+    expose: ["3000"]
+
+  worker:
+    build: ../../GO_EMAIL_WORKER
+    env_file: ./worker.env
+    environment:
+      SERVICE_1_INTERNAL_URL: http://api:3000
+    restart: unless-stopped
+    mem_limit: 128m
+    depends_on: [api]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    mem_limit: 128m
+    ports: ["80:80", "443:443"]
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-api.swayamail.in}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [api]
+
+volumes:
+  caddy_data:
+  caddy_config:
