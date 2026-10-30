@@ -12,6 +12,7 @@ const navItems = [
   { href: "/domains", label: "Domains" },
   { href: "/sending-addresses", label: "Sending addresses" },
   { href: "/api-keys", label: "API keys" },
+  { href: "/webhooks", label: "Webhooks" },
 ];
 
 export function Sidebar() {
