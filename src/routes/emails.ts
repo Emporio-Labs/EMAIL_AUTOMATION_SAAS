@@ -82,7 +82,7 @@ type TenantContext = {
   monthlyCount: number;
 };
 
-function tenantContext(request: Request): TenantContext {
+export function tenantContext(request: Request): TenantContext {
   const tenant = request.tenant!;
   const trialEndsAt = tenant.trial_ends_at;
   const plan: PlanName = trialEndsAt && new Date() > new Date(trialEndsAt) ? 'free' : ((tenant.plan ?? 'free') as PlanName);
@@ -174,7 +174,7 @@ function replayOrConflict(existing: Record<string, any>, hash: string): SendResu
   return { ok: true, status: 200, body: { ...publicEmail(existing), idempotent_replay: true } };
 }
 
-async function checkSender(tenantId: string, fromEmail: string): Promise<string | null> {
+export async function checkSender(tenantId: string, fromEmail: string): Promise<string | null> {
   if (env.AUTH_BYPASS) {
     return null;
   }

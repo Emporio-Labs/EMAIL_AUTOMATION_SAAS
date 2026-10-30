@@ -3,6 +3,7 @@ import { createApp } from './app';
 import { startDomainPoller } from './domain-poller';
 import { startHtmlPurger } from './html-purger';
 import { startWebhookDispatcher } from './lib/webhooks';
+import { startOtpMonitor } from './otp-monitor';
 
 const app = createApp();
 
@@ -13,5 +14,6 @@ app.listen(env.PORT, () => {
     startDomainPoller();
     startHtmlPurger();
     startWebhookDispatcher();
+    startOtpMonitor();
   }
 });

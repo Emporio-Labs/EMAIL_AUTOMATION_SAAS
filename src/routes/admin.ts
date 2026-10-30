@@ -131,6 +131,26 @@ adminRouter.patch('/tenants/:id', async (request, response) => {
   }
 });
 
+// POST /v1/admin/tenants/:id/otp/resume - Resume OTP sending after a bounce pause
+adminRouter.post('/tenants/:id/otp/resume', async (request, response) => {
+  const { data, error } = await supabaseAdmin
+    .from('otp_settings')
+    .update({ paused_at: null, paused_reason: null, resumed_at: new Date().toISOString() })
+    .eq('tenant_id', request.params.id)
+    .select('tenant_id')
+    .maybeSingle();
+
+  if (error) {
+    response.status(500).json({ error: 'Failed to resume OTP sending', detail: error.message });
+    return;
+  }
+  if (!data) {
+    response.status(404).json({ error: 'Tenant has no OTP settings' });
+    return;
+  }
+  response.json({ ok: true });
+});
+
 // GET /v1/admin/beta-users - List beta users
 adminRouter.get('/beta-users', async (request, response) => {
   try {

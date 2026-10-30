@@ -46,8 +46,14 @@ Internet ──HTTPS──> Caddy :443 ──> api:3000 ──> Supabase
          "Action": ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
          "Resource": [
            "arn:aws:sqs:ap-south-1:<account-id>:email-jobs",
-           "arn:aws:sqs:ap-south-1:<account-id>:email-jobs-dlq"
+           "arn:aws:sqs:ap-south-1:<account-id>:email-jobs-dlq",
+           "arn:aws:sqs:ap-south-1:<account-id>:otp-jobs"
          ]
+       },
+       {
+         "Effect": "Allow",
+         "Action": ["route53:ChangeResourceRecordSets"],
+         "Resource": "arn:aws:route53:::hostedzone/<otp-zone-id>"
        }
      ]
    }
@@ -56,6 +62,8 @@ Internet ──HTTPS──> Caddy :443 ──> api:3000 ──> Supabase
 5. **EC2**: t3.small, Amazon Linux 2023 or Ubuntu 24.04, the IAM role above
    attached, security group open on 22 (your IP only), 80 and 443. Allocate an
    Elastic IP and point an `A` record for `api.swayamail.in` at it.
+
+6. **Email OTP** (optional, see section 6 below).
 
 ## 2. Supabase
 
@@ -122,6 +130,42 @@ Point `app.swayamail.in` (or the root domain) at Vercel.
 3. `POST /v1/send` with `"emailType": "transactional"` to your own inbox.
 4. In Supabase, the job should go `queued` → `delivered`, and an
    `email_job_events` row of type `delivered` should appear once SNS is wired.
+
+## 6. Email OTP
+
+`POST /v1/otp/send` and `POST /v1/otp/verify` work with no extra setup when a
+customer sets `from_email` (under `PUT /v1/otp/settings`) to an address on
+their own verified domain. Recommend they verify a subdomain such as
+`otp.theirbrand.com`, so OTP and marketing reputation stay apart.
+
+For the default sender (`noreply@<customer>.<OTP_SENDING_DOMAIN>`):
+
+1. Buy a separate domain for it, not `swayamail.in`. If customers' OTP mail is
+   abused, only that domain's reputation suffers.
+2. Verify it in SES (Easy DKIM), and publish SPF
+   (`v=spf1 include:amazonses.com ~all`) and DMARC
+   (`v=DMARC1; p=quarantine; sp=quarantine`) on it. Every subdomain then sends
+   under the parent identity.
+3. Set `OTP_SENDING_DOMAIN` on the API. Each tenant gets a label from its slug
+   the first time it calls `/v1/otp/send` or opens OTP settings.
+4. Optional, for per-customer DKIM keys: host the domain in Route 53 and set
+   `OTP_ROUTE53_HOSTED_ZONE_ID`. Each subdomain then gets its own SES identity
+   and its DKIM CNAMEs are written for you; the domain poller marks it ready
+   within about 10 minutes.
+5. Warm the domain up: start with your own test traffic and a few customers,
+   and let volume grow over a few weeks.
+
+Fast delivery: create a standard queue `otp-jobs` (visibility timeout 30 s,
+redrive to `email-jobs-dlq` after 5 receives, like `email-jobs`), set `OTP_SQS_QUEUE_URL` on the
+API and `PRIORITY_QUEUE_URL` on the worker. The worker polls it with its own
+pool, so codes never wait behind a campaign.
+
+Abuse controls: per-address (1 a minute, 5 an hour), per end-user IP (20 an
+hour, when the caller passes `ip`) and per-account limits; optional Cloudflare
+Turnstile or hCaptcha checked with the customer's secret; and a monitor that
+pauses a customer's OTP sending when more than 5% bounce (or 2+ complaints at
+0.5%) over 24 hours, emailing `OTP_ALERT_EMAIL`. Resume with
+`POST /v1/admin/tenants/<id>/otp/resume`.
 
 ## Running everything locally
 

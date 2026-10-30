@@ -14,9 +14,8 @@ const navGroups = [
     items: [
       { label: "API keys", href: "#api-keys" },
       { label: "Send emails", href: "#send-api" },
-  { label: "Transactional API", href: "#transactional-api" },
-  { label: "Webhooks", href: "#webhooks" },
       { label: "Transactional API", href: "#transactional-api" },
+      { label: "Email OTP", href: "#otp" },
       { label: "Webhooks", href: "#webhooks" },
       { label: "Delivery status", href: "#delivery-status" },
       { label: "List sends", href: "#list-sends" },
@@ -39,6 +38,9 @@ const tocItems = [
   { label: "Authentication", href: "#authentication" },
   { label: "API keys", href: "#api-keys" },
   { label: "Send emails", href: "#send-api" },
+  { label: "Transactional API", href: "#transactional-api" },
+  { label: "Email OTP", href: "#otp" },
+  { label: "Webhooks", href: "#webhooks" },
   { label: "Delivery status", href: "#delivery-status" },
   { label: "List sends", href: "#list-sends" },
   { label: "Sandbox behavior", href: "#sandbox" },
@@ -319,6 +321,48 @@ GET /v1/emails/:id
               Limits: 50 recipients across to/cc/bcc, 200 KB of HTML, 10 attachment links, 10 tags. Reusing an
               Idempotency-Key with the same body returns the original email (HTTP 200); with a different body it returns 409.
               In a batch, item <span className="font-mono text-xs">i</span> uses key <span className="font-mono text-xs">&lt;key&gt;:i</span>.
+            </p>
+          </section>
+
+          <section id="otp" className="scroll-mt-28 rounded-3xl border border-border bg-surface px-6 py-7 card-shadow">
+            <h2 className="font-display text-2xl text-foreground">Email OTP</h2>
+            <p className="mt-2 text-sm text-muted">
+              Send and check one-time login or signup codes without building any of it yourself. We generate the code,
+              email it from a fast lane that never waits behind campaigns, and check it for you. Codes are stored only as
+              hashes, work once, expire after 10 minutes and lock after 5 wrong tries (all adjustable in OTP settings).
+              The email is plain, with the code in the subject and no tracking.
+            </p>
+            <pre className="mt-4 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-4 text-xs text-[#e6f7ef]">
+{`POST /v1/otp/send
+x-api-key: sk_prod_...
+
+{
+  "email": "user@example.com",
+  "ip": "203.0.113.7",          // your user's IP: enables per-IP limits
+  "captcha_token": "0.Xa...",   // when CAPTCHA is on in OTP settings
+  "purpose": "login"            // optional label
+}
+
+202 { "id": "8c1e...", "email": "user@example.com", "expires_at": "2026-10-30T10:10:00Z" }`}
+            </pre>
+            <pre className="mt-4 overflow-x-auto rounded-2xl border border-border bg-[#101915] px-4 py-4 text-xs text-[#e6f7ef]">
+{`POST /v1/otp/verify
+x-api-key: sk_prod_...
+
+{ "email": "user@example.com", "code": "482913", "id": "8c1e..." }   // id is optional
+
+200 { "valid": true, "id": "8c1e...", "email": "user@example.com" }
+200 { "valid": false, "reason": "invalid", "attempts_remaining": 3 }
+// reason: invalid | expired | too_many_attempts | already_used | superseded | not_found`}
+            </pre>
+            <p className="mt-4 text-sm text-muted">
+              Sender: codes come from the address set as <span className="font-mono text-xs">from_email</span> in OTP
+              settings (use a verified subdomain such as <span className="font-mono text-xs">otp.yourbrand.com</span>),
+              or by default from <span className="font-mono text-xs">noreply@yourcompany.&lt;our OTP domain&gt;</span>.
+              Limits: one code per address per minute and 5 per hour, 20 per IP per hour, and your account&apos;s per-minute
+              rate. Asking for a new code cancels the previous one. Sandbox keys send nothing and return the code in the
+              response so you can test your flow. If too many of your codes bounce, OTP sending pauses until support
+              reviews the account, so protect public forms with CAPTCHA (Cloudflare Turnstile or hCaptcha).
             </p>
           </section>
 
