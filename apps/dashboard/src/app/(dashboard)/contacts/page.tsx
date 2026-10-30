@@ -10,8 +10,28 @@ type Contact = {
   email: string;
   first_name: string | null;
   last_name: string | null;
+  attributes?: Record<string, unknown> | null;
   created_at: string;
 };
+
+// "company: Acme" lines <-> { company: "Acme" }, for merge tags like {{company}}.
+function parseFields(text: string): Record<string, string> | string {
+  const fields: Record<string, string> = {};
+  for (const line of text.split("\n").map((l) => l.trim()).filter(Boolean)) {
+    const index = line.indexOf(":");
+    const key = (index === -1 ? "" : line.slice(0, index)).trim();
+    if (!/^[a-zA-Z_]\w{0,49}$/.test(key)) {
+      return `"${line}" should look like field_name: value (letters, digits and _ in the name)`;
+    }
+    fields[key] = line.slice(index + 1).trim();
+  }
+  return fields;
+}
+
+function formatFields(attributes: Record<string, unknown> | null | undefined): string {
+  const entries = Object.entries(attributes ?? {});
+  return entries.length ? entries.map(([k, v]) => `${k}: ${String(v)}`).join(", ") : "—";
+}
 
 type ContactsResponse = {
   contacts: Contact[];
@@ -29,7 +49,7 @@ export default function ContactsPage() {
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ email: "", firstName: "", lastName: "" });
+  const [form, setForm] = useState({ email: "", firstName: "", lastName: "", fields: "" });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -52,6 +72,11 @@ export default function ContactsPage() {
   async function handleCreate(event: React.FormEvent) {
     event.preventDefault();
     if (!token) return;
+    const attributes = parseFields(form.fields);
+    if (typeof attributes === "string") {
+      setCreateError(attributes);
+      return;
+    }
     setCreating(true);
     setCreateError(null);
 
@@ -62,11 +87,12 @@ export default function ContactsPage() {
           email: form.email,
           firstName: form.firstName || undefined,
           lastName: form.lastName || undefined,
+          attributes: Object.keys(attributes).length ? attributes : undefined,
         }),
       });
       setItems((prev) => [result.contact, ...prev]);
       setShowModal(false);
-      setForm({ email: "", firstName: "", lastName: "" });
+      setForm({ email: "", firstName: "", lastName: "", fields: "" });
     } catch (err: any) {
       setCreateError(err?.message ?? "Failed to add contact");
     } finally {
@@ -75,7 +101,7 @@ export default function ContactsPage() {
   }
 
   function openModal() {
-    setForm({ email: "", firstName: "", lastName: "" });
+    setForm({ email: "", firstName: "", lastName: "", fields: "" });
     setCreateError(null);
     setShowModal(true);
   }
@@ -106,19 +132,20 @@ export default function ContactsPage() {
                   <th className="px-2 py-3 text-left">Email</th>
                   <th className="px-2 py-3 text-left">First name</th>
                   <th className="px-2 py-3 text-left">Last name</th>
+                  <th className="px-2 py-3 text-left">Custom fields</th>
                   <th className="px-2 py-3 text-left">Created</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td className="px-2 py-4 text-muted" colSpan={4}>
+                    <td className="px-2 py-4 text-muted" colSpan={5}>
                       Loading contacts...
                     </td>
                   </tr>
                 ) : error ? (
                   <tr>
-                    <td className="px-2 py-4 text-red-600" colSpan={4}>
+                    <td className="px-2 py-4 text-red-600" colSpan={5}>
                       {error}
                     </td>
                   </tr>
@@ -128,6 +155,7 @@ export default function ContactsPage() {
                       <td className="px-2 py-3 text-foreground font-medium">{row.email}</td>
                       <td className="px-2 py-3 text-muted">{row.first_name ?? "—"}</td>
                       <td className="px-2 py-3 text-muted">{row.last_name ?? "—"}</td>
+                      <td className="px-2 py-3 text-muted max-w-xs truncate">{formatFields(row.attributes)}</td>
                       <td className="px-2 py-3 text-muted">
                         {row.created_at ? new Date(row.created_at).toLocaleDateString() : "—"}
                       </td>
@@ -135,7 +163,7 @@ export default function ContactsPage() {
                   ))
                 ) : (
                   <tr>
-                    <td className="px-2 py-8 text-center text-muted" colSpan={4}>
+                    <td className="px-2 py-8 text-center text-muted" colSpan={5}>
                       No contacts yet.{" "}
                       <button
                         onClick={openModal}
@@ -213,6 +241,21 @@ export default function ContactsPage() {
                   />
                 </label>
               </div>
+
+              <label className="flex flex-col gap-2 text-sm text-muted">
+                <div className="flex items-baseline justify-between">
+                  <span>Custom fields</span>
+                  <span className="text-xs text-muted">Optional, one per line</span>
+                </div>
+                <textarea
+                  id="contact-fields-input"
+                  className="min-h-[80px] rounded-xl border border-border bg-surface-muted px-4 py-3 font-mono text-sm text-foreground outline-none focus:border-accent"
+                  placeholder={"company: Acme Retail\nreport_url: https://..."}
+                  value={form.fields}
+                  onChange={(e) => setForm({ ...form, fields: e.target.value })}
+                />
+                <span className="text-xs">Use them in emails as {"{{company}}"}, {"{{report_url}}"} and so on.</span>
+              </label>
 
               {createError && (
                 <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2">{createError}</p>

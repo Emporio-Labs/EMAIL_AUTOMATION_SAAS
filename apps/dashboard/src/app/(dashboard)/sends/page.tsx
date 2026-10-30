@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/components/auth-gate";
 import { Topbar } from "@/components/topbar";
 import { StatusPill } from "@/components/status-pill";
+import { MERGE_TAG_HELP, TemplatePicker } from "@/components/template-picker";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -566,6 +567,8 @@ export default function SendsPage() {
                 )}
               </label>
 
+              <TemplatePicker token={token} onPick={(t) => setForm((prev) => ({ ...prev, subject: t.subject, html: t.html }))} />
+
               {/* ── Subject ────────────────────────────────── */}
               <label className="flex flex-col gap-2 text-sm text-muted">
                 Subject *
@@ -789,6 +792,7 @@ export default function SendsPage() {
                   onChange={(e) => setForm({ ...form, html: e.target.value })}
                   required
                 />
+                <span className="text-xs">{MERGE_TAG_HELP}</span>
               </label>
 
               <button

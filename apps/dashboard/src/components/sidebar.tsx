@@ -9,6 +9,7 @@ const navItems = [
   { href: "/sends", label: "Sends" },
   { href: "/contacts", label: "Contacts" },
   { href: "/lists", label: "Lists" },
+  { href: "/templates", label: "Templates" },
   { href: "/domains", label: "Domains" },
   { href: "/sending-addresses", label: "Sending addresses" },
   { href: "/api-keys", label: "API keys" },
