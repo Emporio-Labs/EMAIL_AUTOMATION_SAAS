@@ -17,6 +17,7 @@ import { unsubscribeRouter } from './routes/unsubscribe';
 import { sendingAddressesRouter } from './routes/sending-addresses';
 import { adminRouter } from './routes/admin';
 import { trackingRouter } from './routes/tracking';
+import { templatesRouter } from './routes/templates';
 import { emailsRouter } from './routes/emails';
 import { otpRouter, otpSettingsRouter } from './routes/otp';
 import { dispatchWebhooksHandler, webhooksRouter } from './routes/webhooks';
@@ -47,6 +48,7 @@ export function createApp() {
   app.use('/v1/contacts', contactsRouter);
   app.use('/v1/api-keys', apiKeysRouter);
   app.use('/v1/send', sendRouter);
+  app.use('/v1/templates', templatesRouter);
   app.use('/v1/emails', emailsRouter);
   app.use('/v1/otp/settings', otpSettingsRouter);
   app.use('/v1/otp', otpRouter);
