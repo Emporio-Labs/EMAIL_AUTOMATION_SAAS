@@ -13,6 +13,9 @@ echo
 GH_TOKEN="${GH_TOKEN:-}"
 [ -n "$GH_TOKEN" ] || { read -rsp "1) GitHub token (read access to EMAIL_AUTOMATION_SAAS and GO_EMAIL_WORKER): " GH_TOKEN; echo; }
 read -rsp "2) Supabase service_role key (project swayam-mail > Project Settings > API Keys): " SB_SERVICE; echo
+# Some web terminals paste everything twice; undo that.
+undouble() { local v="$1" h=$(( ${#1} / 2 )); if [ $(( ${#v} % 2 )) -eq 0 ] && [ "${v:0:h}" = "${v:h}" ]; then echo "${v:0:h}"; else echo "$v"; fi; }
+GH_TOKEN="$(undouble "$GH_TOKEN")"; SB_SERVICE="$(undouble "$SB_SERVICE")"
 [ -n "$GH_TOKEN" ] && [ -n "$SB_SERVICE" ] || { echo "Both values are required."; exit 1; }
 
 mkdir -p "$DIR" && cd "$DIR"
