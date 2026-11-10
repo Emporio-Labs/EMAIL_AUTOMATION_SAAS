@@ -91,8 +91,11 @@ services:
       - caddy_config:/config
 EOF
 
+# Compose reads .env itself; sudo can drop exported variables.
+echo "API_DOMAIN=${API_DOMAIN}" > .env
+
 echo "-- building and starting (first build takes 5 to 10 minutes)"
-API_DOMAIN="$API_DOMAIN" sudo -E docker compose up -d --build
+sudo docker compose up -d --build
 
 echo
 sudo docker compose ps
