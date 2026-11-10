@@ -241,7 +241,7 @@ export default function LandingPage() {
     <section id="pricing" class="py-20 bg-white border-t border-gray-100">
         <div class="max-w-6xl mx-auto px-6 text-center">
             <h2 class="serif text-3xl mb-4">Pricing</h2>
-            <p class="text-muted mb-8">India-first pricing with zero forex friction via Razorpay. Overage: ₹0.80 per 1,000 emails.</p>
+            <p class="text-muted mb-8">India-first pricing with zero forex friction via Razorpay. Overage: ₹15 per 1,000 emails. All prices exclude 18% GST.</p>
             <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 text-left">
                 <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
                     <div>
@@ -254,7 +254,7 @@ export default function LandingPage() {
                 <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
                     <div>
                         <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Starter</div>
-                        <h3 class="text-3xl font-semibold my-2">₹299<span class="text-sm font-normal text-muted">/mo</span></h3>
+                        <h3 class="text-3xl font-semibold my-2">₹499<span class="text-sm font-normal text-muted">/mo + GST</span></h3>
                         <p class="text-sm text-gray-500">25,000 emails / month</p>
                     </div>
                     <div class="mt-6"><a href="/signin?mode=signup" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Started</a></div>
@@ -262,7 +262,7 @@ export default function LandingPage() {
                 <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
                     <div>
                         <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Growth</div>
-                        <h3 class="text-3xl font-semibold my-2">₹799<span class="text-sm font-normal text-muted">/mo</span></h3>
+                        <h3 class="text-3xl font-semibold my-2">₹1,499<span class="text-sm font-normal text-muted">/mo + GST</span></h3>
                         <p class="text-sm text-gray-500">100,000 emails / month</p>
                     </div>
                     <div class="mt-6"><a href="/signin?mode=signup" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Growth</a></div>
@@ -270,7 +270,7 @@ export default function LandingPage() {
                 <div class="p-6 border border-gray-150 rounded-xl flex flex-col justify-between">
                     <div>
                         <div class="text-xs uppercase text-muted font-bold tracking-wider mb-1">Scale</div>
-                        <h3 class="text-3xl font-semibold my-2">₹1,999<span class="text-sm font-normal text-muted">/mo</span></h3>
+                        <h3 class="text-3xl font-semibold my-2">₹5,999<span class="text-sm font-normal text-muted">/mo + GST</span></h3>
                         <p class="text-sm text-gray-500">500,000 emails / month</p>
                     </div>
                     <div class="mt-6"><a href="/signin?mode=signup" class="inline-block w-full text-center bg-black text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-emerald-600 transition-colors">Get Scale</a></div>

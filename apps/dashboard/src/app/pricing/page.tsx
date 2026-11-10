@@ -6,7 +6,7 @@ export default function PricingPage() {
       <div className="max-w-6xl mx-auto text-center">
         <h1 className="serif text-4xl mb-4">Pricing</h1>
         <p className="text-muted mb-8">
-          INR-denominated pricing with Razorpay integration — zero forex fee friction. Overage: ₹0.80 per 1,000 emails.
+          INR-denominated pricing with Razorpay integration — zero forex fee friction. Overage: ₹15 per 1,000 emails. All prices exclude 18% GST.
         </p>
 
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 text-left">
@@ -26,7 +26,7 @@ export default function PricingPage() {
             <div>
               <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Starter</div>
               <h3 className="text-3xl font-semibold my-2">
-                ₹299<span className="text-sm font-normal text-muted">/mo</span>
+                ₹499<span className="text-sm font-normal text-muted">/mo + GST</span>
               </h3>
               <p className="text-sm text-muted">25,000 emails / month</p>
             </div>
@@ -40,7 +40,7 @@ export default function PricingPage() {
             <div>
               <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Growth</div>
               <h3 className="text-3xl font-semibold my-2">
-                ₹799<span className="text-sm font-normal text-muted">/mo</span>
+                ₹1,499<span className="text-sm font-normal text-muted">/mo + GST</span>
               </h3>
               <p className="text-sm text-muted">100,000 emails / month</p>
             </div>
@@ -54,7 +54,7 @@ export default function PricingPage() {
             <div>
               <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Scale</div>
               <h3 className="text-3xl font-semibold my-2">
-                ₹1,999<span className="text-sm font-normal text-muted">/mo</span>
+                ₹5,999<span className="text-sm font-normal text-muted">/mo + GST</span>
               </h3>
               <p className="text-sm text-muted">500,000 emails / month</p>
             </div>
