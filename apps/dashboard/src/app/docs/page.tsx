@@ -1,4 +1,12 @@
 import React from "react";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "API documentation",
+  description:
+    "SwayamMail API documentation: authentication, the transactional send API, email OTP send and verify, webhooks and sandbox keys.",
+  alternates: { canonical: "/docs" },
+};
 
 const navGroups = [
   {

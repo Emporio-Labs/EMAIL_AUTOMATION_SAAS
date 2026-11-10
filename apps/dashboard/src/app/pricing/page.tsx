@@ -1,71 +1,36 @@
-import React from "react";
+import type { Metadata } from "next";
+import { FinalCta, MarketingFooter, MarketingNav, PricingGrid } from "@/components/marketing/site-chrome";
+
+const title = "Pricing: email API plans in rupees";
+const description =
+  "SwayamMail pricing: free for 1,000 emails a month, then ₹499 for 25,000, ₹1,499 for 100,000 and ₹5,999 for 500,000 emails a month, plus GST. Email OTP, transactional and marketing email included.";
+
+export const metadata: Metadata = {
+  title,
+  description,
+  alternates: { canonical: "/pricing" },
+  openGraph: { title, description, url: "/pricing" },
+};
 
 export default function PricingPage() {
   return (
-    <div className="min-h-screen bg-background text-foreground px-6 py-12">
-      <div className="max-w-6xl mx-auto text-center">
-        <h1 className="serif text-4xl mb-4">Pricing</h1>
-        <p className="text-muted mb-8">
-          INR-denominated pricing with Razorpay integration — zero forex fee friction. Overage: ₹15 per 1,000 emails. All prices exclude 18% GST.
-        </p>
-
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 text-left">
-          <div className="p-6 border border-border rounded-xl flex flex-col justify-between">
-            <div>
-              <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Free</div>
-              <h3 className="text-3xl font-semibold my-2">₹0</h3>
-              <p className="text-sm text-muted">1,000 emails / month</p>
-            </div>
-            <div className="mt-6">
-              <a href="/signin?mode=signup" className="inline-block w-full text-center bg-foreground text-background px-4 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity">
-                Get Free
-              </a>
-            </div>
-          </div>
-          <div className="p-6 border border-border rounded-xl flex flex-col justify-between">
-            <div>
-              <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Starter</div>
-              <h3 className="text-3xl font-semibold my-2">
-                ₹499<span className="text-sm font-normal text-muted">/mo + GST</span>
-              </h3>
-              <p className="text-sm text-muted">25,000 emails / month</p>
-            </div>
-            <div className="mt-6">
-              <a href="/signin?mode=signup" className="inline-block w-full text-center bg-foreground text-background px-4 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity">
-                Get Started
-              </a>
-            </div>
-          </div>
-          <div className="p-6 border border-border rounded-xl flex flex-col justify-between">
-            <div>
-              <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Growth</div>
-              <h3 className="text-3xl font-semibold my-2">
-                ₹1,499<span className="text-sm font-normal text-muted">/mo + GST</span>
-              </h3>
-              <p className="text-sm text-muted">100,000 emails / month</p>
-            </div>
-            <div className="mt-6">
-              <a href="/signin?mode=signup" className="inline-block w-full text-center bg-foreground text-background px-4 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity">
-                Get Growth
-              </a>
-            </div>
-          </div>
-          <div className="p-6 border border-border rounded-xl flex flex-col justify-between">
-            <div>
-              <div className="text-xs uppercase text-muted font-bold tracking-wider mb-1">Scale</div>
-              <h3 className="text-3xl font-semibold my-2">
-                ₹5,999<span className="text-sm font-normal text-muted">/mo + GST</span>
-              </h3>
-              <p className="text-sm text-muted">500,000 emails / month</p>
-            </div>
-            <div className="mt-6">
-              <a href="/signin?mode=signup" className="inline-block w-full text-center bg-foreground text-background px-4 py-2.5 rounded-lg text-sm font-semibold hover:opacity-90 transition-opacity">
-                Get Scale
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    <>
+      <MarketingNav />
+      <main>
+        <section className="mx-auto max-w-6xl px-5 py-16 text-center">
+          <h1 className="font-display text-4xl sm:text-5xl">Simple monthly pricing in rupees.</h1>
+          <p className="mx-auto mb-10 mt-4 max-w-xl text-muted">
+            Flat plans, no credits that expire. One account covers email OTP, the transactional API and campaigns;
+            marketing campaigns start on the Starter plan.
+          </p>
+          <PricingGrid />
+        </section>
+        <FinalCta
+          title="Start on the free plan."
+          body="1,000 emails a month at no cost. Upgrade when you need more."
+        />
+      </main>
+      <MarketingFooter />
+    </>
   );
 }
