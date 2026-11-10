@@ -47,4 +47,10 @@ const envSchema = z.object({
   path: ['AUTH_BYPASS'],
 });
 
-export const env = envSchema.parse(process.env);
+// Treat empty values (e.g. `OTP_SENDING_DOMAIN=` in a Docker env file) as unset,
+// so optional settings left blank don't fail validation and stop the API.
+const rawEnv = Object.fromEntries(
+  Object.entries(process.env).filter(([, value]) => value !== undefined && value.trim() !== ''),
+);
+
+export const env = envSchema.parse(rawEnv);
