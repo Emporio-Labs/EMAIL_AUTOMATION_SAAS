@@ -144,8 +144,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Show onboarding wizard if no verified domain yet
-  if (needsOnboarding) {
+  // Show onboarding wizard if the tenant has no domain yet. System admins skip it:
+  // they manage every tenant from the Admin Panel and need no sending domain of their own.
+  if (needsOnboarding && !isAdmin) {
     return (
       <OnboardingWizard
         token={token}
