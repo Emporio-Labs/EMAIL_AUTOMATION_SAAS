@@ -78,11 +78,22 @@ authRouter.post('/signup', async (request, response) => {
     return;
   }
 
-  // Create the Supabase auth user
-  const { data: authData, error: authError } = await supabasePublic.auth.signUp({ email, password });
+  // Create the auth user already confirmed. Beta users received their invite at
+  // this address, so a second "confirm your email" mail adds nothing, and skipping
+  // it keeps signup off Supabase's rate-limited built-in mailer.
+  const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+    email,
+    password,
+    email_confirm: true,
+  });
 
   if (authError || !authData.user) {
-    response.status(400).json({ error: authError?.message ?? 'Failed to create account' });
+    const alreadyExists = authError?.code === 'email_exists' || /already (been )?registered/i.test(authError?.message ?? '');
+    response.status(alreadyExists ? 409 : 400).json({
+      error: alreadyExists
+        ? 'An account with this email already exists. Please sign in instead.'
+        : authError?.message ?? 'Failed to create account',
+    });
     return;
   }
 
@@ -115,22 +126,24 @@ authRouter.post('/signup', async (request, response) => {
     return;
   }
 
-  // Return session tokens if email confirmation is not required
-  if (authData.session) {
+  // Sign the new user in so the dashboard can continue straight to onboarding.
+  const { data: sessionData, error: sessionError } = await supabasePublic.auth.signInWithPassword({ email, password });
+
+  if (sessionError || !sessionData.session) {
+    console.error('[signup] post-signup sign-in error:', sessionError);
     response.status(201).json({
-      access_token: authData.session.access_token,
-      refresh_token: authData.session.refresh_token,
-      expires_in: authData.session.expires_in,
-      token_type: authData.session.token_type,
-      user: authData.user,
+      requiresConfirmation: true,
+      message: 'Account created! Please sign in with your email and password.',
     });
     return;
   }
 
-  // Email confirmation is required — ask the user to verify
   response.status(201).json({
-    requiresConfirmation: true,
-    message: 'Account created! Check your email to confirm your address before signing in.',
+    access_token: sessionData.session.access_token,
+    refresh_token: sessionData.session.refresh_token,
+    expires_in: sessionData.session.expires_in,
+    token_type: sessionData.session.token_type,
+    user: sessionData.user,
   });
 });
 
