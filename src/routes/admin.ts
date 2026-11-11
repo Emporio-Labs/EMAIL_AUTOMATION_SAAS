@@ -8,6 +8,7 @@ import { supabaseAdmin } from '../lib/supabase';
 import { buildEmailJobMessage, publishEmailJobMessage } from '../lib/sqs';
 import { env } from '../config/env';
 import { computeHtmlHash } from '../utils/hash';
+import { buildInviteEmail } from '../lib/invite-email';
 
 export const adminRouter = Router();
 
@@ -201,16 +202,13 @@ adminRouter.post('/beta-users', async (request, response) => {
     const dashboardUrl = request.headers.origin || 'http://localhost:3001';
     const signupUrl = `${dashboardUrl}/signin?email=${encodeURIComponent(email)}&mode=signup`;
 
-    const inviteHtml = `
-      <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto; padding: 24px; border: 1px solid #eaeaea; border-radius: 16px; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
-        <h2 style="color: #1a1a1a; font-size: 20px; font-weight: 700; margin-bottom: 16px;">You're Invited to SwayamMail!</h2>
-        <p style="color: #4a4a4a; line-height: 1.6; font-size: 14px;">You have been granted exclusive beta access to SwayamMail — the India-first transactional email platform for builders.</p>
-        <div style="margin: 32px 0;">
-          <a href="${signupUrl}" style="background-color: #1a1a1a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 9999px; font-size: 14px; font-weight: 600; display: inline-block; text-align: center;">Accept Invite & Create Account</a>
-        </div>
-        <p style="color: #71717a; font-size: 11px; margin-top: 32px;">This invitation was sent to ${email}. If you did not request this, please ignore this email.</p>
-      </div>
-    `;
+    const invite = buildInviteEmail({
+      email,
+      signupUrl,
+      supportEmail: env.SUPPORT_EMAIL,
+      supportWhatsapp: env.SUPPORT_WHATSAPP,
+    });
+    const inviteHtml = invite.html;
 
     const inviteHtmlHash = computeHtmlHash(inviteHtml);
 
@@ -227,7 +225,7 @@ adminRouter.post('/beta-users', async (request, response) => {
         tenant_id: adminTenantId,
         from_email: fromEmail,
         to_email: email,
-        subject: "You've been invited to SwayamMail Beta",
+        subject: invite.subject,
         html_hash: inviteHtmlHash,
         status: 'queued',
         email_type: 'transactional',
@@ -242,8 +240,11 @@ adminRouter.post('/beta-users', async (request, response) => {
       tenantId: adminTenantId as string,
       from: fromEmail,
       to: email,
-      subject: "You've been invited to SwayamMail Beta",
+      subject: invite.subject,
       html: inviteHtml,
+      text: invite.text,
+      fromName: 'SwayamMail',
+      replyTo: env.SUPPORT_EMAIL ? [env.SUPPORT_EMAIL] : undefined,
       configurationSetName: env.SES_CONFIGURATION_SET,
       headers: [],
     });

@@ -42,6 +42,9 @@ const envSchema = z.object({
   OTP_HMAC_KEY: z.string().min(32).optional(),
   // Where bounce-rate alerts for OTP mail go.
   OTP_ALERT_EMAIL: z.string().email().optional(),
+  // Support contacts shown in the beta invite email (optional).
+  SUPPORT_EMAIL: z.string().email().optional(),
+  SUPPORT_WHATSAPP: z.string().regex(/^\+?[0-9 ]{8,16}$/).optional(),
 }).refine((value) => !(value.AUTH_BYPASS && value.NODE_ENV === 'production'), {
   message: 'AUTH_BYPASS must not be enabled when NODE_ENV=production',
   path: ['AUTH_BYPASS'],
